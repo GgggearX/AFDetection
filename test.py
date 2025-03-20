@@ -93,8 +93,23 @@ def check_gpu_details():
     except:
         print("无法获取 TensorFlow 编译信息")
 
+# 配置GPU
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("GPU可用")
+    except RuntimeError as e:
+        print(e)
+else:
+    print("未检测到GPU")
+
 if __name__ == "__main__":
     check_gpu_details()
+
+print(tf.__version__)
+print(tf.config.list_physical_devices('GPU'))
 
 
 

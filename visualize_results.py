@@ -2,20 +2,34 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, roc_curve, auc, roc_auc_score, average_precision_score, precision_recall_curve, precision_score, recall_score, f1_score
 import os
 
-def plot_training_history(rnn_history, densenet_history, metric='loss'):
-    """绘制训练历史曲线"""
+# Set global font and style parameters
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['Arial', 'DejaVu Sans', 'Helvetica'],
+    'axes.unicode_minus': False,
+    'figure.dpi': 100,
+    'figure.autolayout': True
+})
+plt.style.use('seaborn')
+
+def plot_training_history(rnn_history, densenet_history, cnn_lstm_history, metric='loss'):
+    """Plot training history curves"""
     plt.figure(figsize=(12, 6))
     
-    # RNN训练历史
+    # RNN training history
     plt.plot(rnn_history[metric], 'b-', label=f'RNN Training {metric}')
     plt.plot(rnn_history[f'val_{metric}'], 'b--', label=f'RNN Validation {metric}')
     
-    # DenseNet训练历史
+    # DenseNet training history
     plt.plot(densenet_history[metric], 'r-', label=f'DenseNet Training {metric}')
     plt.plot(densenet_history[f'val_{metric}'], 'r--', label=f'DenseNet Validation {metric}')
+    
+    # CNN-LSTM training history
+    plt.plot(cnn_lstm_history[metric], 'g-', label=f'CNN-LSTM Training {metric}')
+    plt.plot(cnn_lstm_history[f'val_{metric}'], 'g--', label=f'CNN-LSTM Validation {metric}')
     
     plt.title(f'Model {metric.capitalize()} History')
     plt.xlabel('Epoch')
@@ -26,18 +40,18 @@ def plot_training_history(rnn_history, densenet_history, metric='loss'):
     plt.close()
 
 def plot_prediction_distribution(predictions_df):
-    """绘制预测分布"""
+    """Plot prediction distribution for all models"""
     plt.figure(figsize=(15, 5))
     
-    # 创建子图
-    for i, model in enumerate(['RNN_Prediction', 'DenseNet_Prediction', 'Ensemble_Prediction']):
-        plt.subplot(1, 3, i+1)
+    # Create subplots
+    for i, model in enumerate(['RNN_Prediction', 'DenseNet_Prediction', 'CNN-LSTM_Prediction', 'Ensemble_Prediction']):
+        plt.subplot(1, 4, i+1)
         
-        # 分别绘制正负样本的预测分布
+        # Plot distribution for positive and negative samples
         for label in [0, 1]:
             mask = predictions_df['True_Label'] == label
             sns.kdeplot(predictions_df[model][mask], 
-                       label=f'Label {label}',
+                       label=f'Class {label}',
                        fill=True)
         
         plt.title(f'{model.split("_")[0]} Predictions')
@@ -50,17 +64,17 @@ def plot_prediction_distribution(predictions_df):
     plt.close()
 
 def plot_confusion_matrices(predictions_df, threshold=0.5):
-    """绘制混淆矩阵"""
+    """Plot confusion matrices for all models"""
     plt.figure(figsize=(15, 5))
     
-    for i, model in enumerate(['RNN_Prediction', 'DenseNet_Prediction', 'Ensemble_Prediction']):
-        plt.subplot(1, 3, i+1)
+    for i, model in enumerate(['RNN_Prediction', 'DenseNet_Prediction', 'CNN-LSTM_Prediction', 'Ensemble_Prediction']):
+        plt.subplot(1, 4, i+1)
         
-        # 计算混淆矩阵
+        # Calculate confusion matrix
         y_pred = (predictions_df[model] > threshold).astype(int)
         cm = confusion_matrix(predictions_df['True_Label'], y_pred)
         
-        # 绘制混淆矩阵
+        # Plot confusion matrix
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
         plt.title(f'{model.split("_")[0]} Confusion Matrix')
         plt.xlabel('Predicted Label')
@@ -71,7 +85,7 @@ def plot_confusion_matrices(predictions_df, threshold=0.5):
     plt.close()
 
 def plot_fold_comparison(fold_results):
-    """绘制不同fold之间的性能比较"""
+    """Plot performance comparison between different folds"""
     plt.figure(figsize=(12, 6))
     
     metrics = ['accuracy', 'auc']
@@ -80,7 +94,7 @@ def plot_fold_comparison(fold_results):
         
         data = []
         labels = []
-        for model in ['RNN', 'DenseNet']:
+        for model in ['RNN', 'DenseNet', 'CNN-LSTM']:
             for fold in range(1, 6):
                 data.append(fold_results[f'{model}_fold_{fold}'][metric])
                 labels.extend([f'{model} Fold {fold}'])
@@ -95,14 +109,14 @@ def plot_fold_comparison(fold_results):
     plt.close()
 
 def create_summary_table(predictions_df, threshold=0.5):
-    """创建模型性能总结表"""
+    """Create model performance summary table"""
     summary = []
     
-    for model in ['RNN_Prediction', 'DenseNet_Prediction', 'Ensemble_Prediction']:
+    for model in ['RNN_Prediction', 'DenseNet_Prediction', 'CNN-LSTM_Prediction', 'Ensemble_Prediction']:
         y_pred = (predictions_df[model] > threshold).astype(int)
         y_true = predictions_df['True_Label']
         
-        # 计算各种指标
+        # Calculate metrics
         tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
         accuracy = (tp + tn) / (tp + tn + fp + fn)
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
@@ -125,27 +139,139 @@ def create_summary_table(predictions_df, threshold=0.5):
     summary_df.to_csv('outputs/model_performance_summary.csv', index=False)
     return summary_df
 
+def plot_model_predictions(predictions_df, model_name, threshold=0.5):
+    """Plot prediction results for a single model"""
+    plt.figure(figsize=(12, 6))
+    
+    # Plot prediction distribution
+    plt.subplot(1, 2, 1)
+    sns.histplot(data=predictions_df, x=f'{model_name}_Prediction', bins=50)
+    plt.title(f'{model_name} Prediction Distribution')
+    plt.xlabel('Prediction Probability')
+    plt.ylabel('Sample Count')
+    
+    # Plot ROC curve
+    plt.subplot(1, 2, 2)
+    fpr, tpr, _ = roc_curve(predictions_df['True_Label'], predictions_df[f'{model_name}_Prediction'])
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f'ROC curve (AUC = {roc_auc:.3f})')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(f'{model_name} ROC Curve')
+    plt.legend(loc="lower right")
+    
+    plt.tight_layout()
+    plt.savefig(f'outputs/{model_name.lower()}_predictions.png')
+    plt.close()
+
+def plot_ensemble_comparison(predictions_df):
+    """Plot comparison between ensemble model and individual models"""
+    plt.figure(figsize=(15, 10))
+    
+    # Plot ROC curves for all models
+    plt.subplot(2, 2, 1)
+    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
+        fpr, tpr, _ = roc_curve(predictions_df['True_Label'], predictions_df[f'{model}_Prediction'])
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, label=f'{model} (AUC = {roc_auc:.3f})')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curves Comparison')
+    plt.legend(loc="lower right")
+    
+    # Plot prediction boxplots using seaborn instead of pandas
+    plt.subplot(2, 2, 2)
+    pred_columns = [col for col in predictions_df.columns if col.endswith('_Prediction')]
+    plot_data = pd.melt(predictions_df[pred_columns])
+    sns.boxplot(x='variable', y='value', data=plot_data)
+    plt.title('Model Predictions Distribution')
+    plt.ylabel('Prediction Probability')
+    plt.xlabel('Model')
+    plt.xticks(rotation=45)
+    
+    # Plot confusion matrix
+    plt.subplot(2, 2, 3)
+    cm = confusion_matrix(predictions_df['True_Label'], 
+                         predictions_df['Ensemble_Prediction'] > 0.5)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title('Ensemble Model Confusion Matrix')
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    
+    # Plot PR curves
+    plt.subplot(2, 2, 4)
+    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
+        precision, recall, _ = precision_recall_curve(predictions_df['True_Label'], 
+                                                    predictions_df[f'{model}_Prediction'])
+        avg_precision = average_precision_score(predictions_df['True_Label'], 
+                                             predictions_df[f'{model}_Prediction'])
+        plt.plot(recall, precision, label=f'{model} (AP = {avg_precision:.3f})')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curves Comparison')
+    plt.legend(loc="lower left")
+    
+    plt.tight_layout()
+    plt.savefig('outputs/ensemble_comparison.png', bbox_inches='tight', dpi=300)
+    plt.close()
+
 def main():
-    # 创建输出目录
+    # Create output directory
     os.makedirs('outputs', exist_ok=True)
     
-    # 加载预测结果
+    # Load prediction results
     predictions_df = pd.read_csv('outputs/predictions.csv')
     
-    # 加载训练历史（假设已保存）
+    # Load training history
     rnn_history = pd.read_csv('RNN/logs/fold_1/training.log')
     densenet_history = pd.read_csv('DenseNet/logs/fold_1/training.log')
+    cnn_lstm_history = pd.read_csv('CNN-LSTM/logs/fold_1/training.log')
     
-    # 绘制各种可视化
-    plot_training_history(rnn_history, densenet_history, 'loss')
-    plot_training_history(rnn_history, densenet_history, 'accuracy')
+    # Generate visualizations
+    plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'loss')
+    plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'accuracy')
     plot_prediction_distribution(predictions_df)
     plot_confusion_matrices(predictions_df)
     
-    # 创建性能总结
+    # Create performance summary
     summary_df = create_summary_table(predictions_df)
-    print("\n模型性能总结:")
+    print("\nModel Performance Summary:")
     print(summary_df.to_string())
+
+    # Plot individual model predictions
+    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
+        plot_model_predictions(predictions_df, model)
+    
+    # Plot ensemble comparison
+    plot_ensemble_comparison(predictions_df)
+    
+    # Print evaluation metrics
+    print("\nModel Evaluation Metrics:")
+    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
+        pred = predictions_df[f'{model}_Prediction']
+        true = predictions_df['True_Label']
+        
+        # Calculate metrics
+        auc_score = roc_auc_score(true, pred)
+        ap_score = average_precision_score(true, pred)
+        f1 = f1_score(true, pred > 0.5)
+        precision = precision_score(true, pred > 0.5)
+        recall = recall_score(true, pred > 0.5)
+        
+        print(f"\n{model} Model:")
+        print(f"AUC: {auc_score:.3f}")
+        print(f"Average Precision: {ap_score:.3f}")
+        print(f"F1 Score: {f1:.3f}")
+        print(f"Precision: {precision:.3f}")
+        print(f"Recall: {recall:.3f}")
 
 if __name__ == "__main__":
     main()
