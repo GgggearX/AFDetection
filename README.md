@@ -118,7 +118,7 @@ python train_rnn.py data/ecg_tracings.hdf5 data/annotations/gold_standard.csv \
     --batch_size 32 \
     --learning_rate 0.001
 ```
-
+ecg_tracings.hdf5文件需自行下载后放入正确位置data/ecg_tracings.hdf5
 2. 训练DenseNet模型：
 ```bash
 python train_densenet.py data/ecg_tracings.hdf5 data/annotations/gold_standard.csv \
