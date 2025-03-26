@@ -224,49 +224,58 @@ def plot_ensemble_comparison(predictions_df):
     plt.close()
 
 def main():
-    # Create output directory
+    # 创建输出目录
     os.makedirs('outputs', exist_ok=True)
     
-    # Load prediction results
+    # 加载预测结果
     predictions_df = pd.read_csv('outputs/predictions.csv')
     
-    # Load training history
-    rnn_history = pd.read_csv('RNN/logs/fold_1/training.log')
-    densenet_history = pd.read_csv('DenseNet/logs/fold_1/training.log')
-    cnn_lstm_history = pd.read_csv('CNN-LSTM/logs/fold_1/training.log')
+    # 加载训练历史
+    try:
+        rnn_history = pd.read_csv('RNN/logs/fold_1/training_fold_1.csv')
+        densenet_history = pd.read_csv('DenseNet/logs/fold_1/training_fold_1.csv')
+        cnn_lstm_history = pd.read_csv('CNN-LSTM/logs/fold_1/training_fold_1.csv')
+    except FileNotFoundError as e:
+        print(f"警告：无法加载训练历史文件: {str(e)}")
+        print("将跳过训练历史相关的可视化。")
+        rnn_history = None
+        densenet_history = None
+        cnn_lstm_history = None
     
-    # Generate visualizations
-    plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'loss')
-    plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'accuracy')
+    # 生成可视化
+    if rnn_history is not None and densenet_history is not None and cnn_lstm_history is not None:
+        plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'loss')
+        plot_training_history(rnn_history, densenet_history, cnn_lstm_history, 'accuracy')
+    
     plot_prediction_distribution(predictions_df)
     plot_confusion_matrices(predictions_df)
     
-    # Create performance summary
+    # 创建性能总结
     summary_df = create_summary_table(predictions_df)
-    print("\nModel Performance Summary:")
+    print("\n模型性能总结:")
     print(summary_df.to_string())
 
-    # Plot individual model predictions
+    # 绘制单个模型预测结果
     for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
         plot_model_predictions(predictions_df, model)
     
-    # Plot ensemble comparison
+    # 绘制集成模型比较
     plot_ensemble_comparison(predictions_df)
     
-    # Print evaluation metrics
-    print("\nModel Evaluation Metrics:")
+    # 打印评估指标
+    print("\n模型评估指标:")
     for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'Ensemble']:
         pred = predictions_df[f'{model}_Prediction']
         true = predictions_df['True_Label']
         
-        # Calculate metrics
+        # 计算指标
         auc_score = roc_auc_score(true, pred)
         ap_score = average_precision_score(true, pred)
         f1 = f1_score(true, pred > 0.5)
         precision = precision_score(true, pred > 0.5)
         recall = recall_score(true, pred > 0.5)
         
-        print(f"\n{model} Model:")
+        print(f"\n{model} 模型:")
         print(f"AUC: {auc_score:.3f}")
         print(f"Average Precision: {ap_score:.3f}")
         print(f"F1 Score: {f1:.3f}")

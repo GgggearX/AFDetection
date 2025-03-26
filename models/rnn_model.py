@@ -69,7 +69,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     # MultiHeadAttention
     attn_out_1 = MultiHeadAttention(
         num_heads=4, 
-        key_dim=32,
+        key_dim=64,  # 修改 key_dim 以匹配维度
         name='multi_head_attn_1'
     )(x, x)
     attn_out_1 = Dropout(0.2, name='dropout_attn1')(attn_out_1)
@@ -101,7 +101,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     x = AveragePooling1D(pool_size=2, name='pool_before_attn2')(x)
     attn_out_2 = MultiHeadAttention(
         num_heads=4,
-        key_dim=32,
+        key_dim=64,  # 修改 key_dim 以匹配维度
         name='multi_head_attn_2'
     )(x, x)
     attn_out_2 = Dropout(0.2, name='dropout_attn2')(attn_out_2)

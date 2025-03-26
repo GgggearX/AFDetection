@@ -5,169 +5,285 @@ from tensorflow.keras.utils import Sequence
 import numpy as np
 from scipy import signal
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
+from scipy.io import loadmat
+import os
+import random
 
 
 class ECGSequence(Sequence):
-    @classmethod
-    def get_train_and_val(cls, path_to_hdf5, hdf5_dset, path_to_csv, batch_size=8, val_split=0.02):
-        n_samples = len(pd.read_csv(path_to_csv))
-        n_train = math.ceil(n_samples*(1-val_split))
-        
-        # 首先创建训练序列并进行拟合
-        train_seq = cls(path_to_hdf5, hdf5_dset, path_to_csv, batch_size, end_idx=n_train, is_training=True)
-        # 使用相同的标准化器创建验证序列
-        valid_seq = cls(path_to_hdf5, hdf5_dset, path_to_csv, batch_size, start_idx=n_train, 
-                       is_training=False, scalers=train_seq.scalers)
-        return train_seq, valid_seq
-
-    def __init__(self, x_data, y_data=None, batch_size=8, start_idx=0, end_idx=None, 
-                 is_training=False, scalers=None):
+    """ECG数据生成器"""
+    def __init__(self, x_data, y_data, batch_size=32, shuffle=True, scalers=None, use_augmentation=False):
         """
-        初始化序列生成器
+        初始化数据生成器
         
-        参数:
-        x_data: 可以是HDF5文件路径(str)或numpy数组
-        y_data: 可以是CSV文件路径(str)或numpy数组
-        batch_size: 批次大小
-        start_idx: 起始索引
-        end_idx: 结束索引
-        is_training: 是否为训练模式（决定是否进行数据增强）
-        scalers: 预训练的StandardScaler列表（用于验证/测试集）
+        Args:
+            x_data: ECG数据
+            y_data: 标签
+            batch_size: 批次大小
+            shuffle: 是否打乱数据
+            scalers: 标准化参数
+            use_augmentation: 是否使用数据增强
         """
+        # 确保数据类型为float32
+        self.x_data = x_data.astype(np.float32)
+        self.y_data = y_data.astype(np.float32)
         self.batch_size = batch_size
-        self.is_training = is_training
+        self.shuffle = shuffle
+        self.use_augmentation = use_augmentation
         
-        # 处理x_data
-        if isinstance(x_data, str):
-            self.f = h5py.File(x_data, "r")
-            self.x = self.f[y_data] if isinstance(y_data, str) else self.f['tracings']
-            self.close_file = True
+        # 初始化或使用已有的标准化器
+        if scalers is None:
+            self.scalers = [StandardScaler() for _ in range(x_data.shape[2])]
+            for i in range(x_data.shape[2]):
+                self.scalers[i].fit(self.x_data[:, :, i].reshape(-1, 1))
         else:
-            self.x = x_data
-            self.f = None
-            self.close_file = False
-            
-        # 处理y_data
-        if y_data is None:
-            self.y = None
-        elif isinstance(y_data, str):
-            self.y = pd.read_csv(y_data).values
-        else:
-            self.y = y_data
-            
-        # 设置索引范围
-        if end_idx is None:
-            end_idx = len(self.x)
-        self.start_idx = start_idx
-        self.end_idx = end_idx
-
-        # 处理标准化器
-        if scalers is not None:
             self.scalers = scalers
-        else:
-            self.scalers = [StandardScaler() for _ in range(12)]
-            if is_training:
-                # 在训练模式下，对每个导联进行拟合
-                x_array = np.array(self.x)
-                for i in range(12):
-                    # 重塑数据以适应StandardScaler
-                    lead_data = x_array[:, :, i].reshape(-1, 1)
-                    self.scalers[i].fit(lead_data)
-            else:
-                # 在预测模式下，如果没有提供标准化器，则使用训练数据的统计信息
-                x_array = np.array(self.x)
-                for i in range(12):
-                    lead_data = x_array[:, :, i].reshape(-1, 1)
-                    self.scalers[i].mean_ = np.mean(lead_data)
-                    self.scalers[i].var_ = np.var(lead_data)
-                    self.scalers[i].scale_ = np.sqrt(self.scalers[i].var_)
-
-    def apply_data_augmentation(self, batch_x):
-        """应用数据增强技术"""
-        augmented_batch = batch_x.copy()
+            
+        # 标准化数据
+        self.x_data_normalized = np.zeros_like(self.x_data, dtype=np.float32)
+        for i in range(self.x_data.shape[2]):
+            self.x_data_normalized[:, :, i] = self.scalers[i].transform(
+                self.x_data[:, :, i].reshape(-1, 1)).reshape(self.x_data.shape[0], -1)
+            
+        self.indexes = np.arange(len(self.x_data))
+        if self.shuffle:
+            np.random.shuffle(self.indexes)
         
+        # 计算类别权重
+        unique_classes = np.unique(self.y_data)
+        self.class_weights = compute_class_weight(
+            class_weight='balanced',
+            classes=unique_classes,
+            y=self.y_data.flatten()
+        )
+    
+    def __len__(self):
+        """返回批次数"""
+        return int(np.ceil(len(self.x_data) / self.batch_size))
+    
+    def __getitem__(self, idx):
+        """获取一个批次的数据"""
+        batch_indexes = self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size]
+        x_batch = self.x_data_normalized[batch_indexes].astype(np.float32)
+        y_batch = self.y_data[batch_indexes].astype(np.float32)
+        
+        if self.use_augmentation:
+            x_batch = self._augment_batch(x_batch)
+        
+        return x_batch, y_batch
+    
+    def on_epoch_end(self):
+        """每个epoch结束时打乱数据"""
+        if self.shuffle:
+            np.random.shuffle(self.indexes)
+    
+    def save_scalers(self, path):
+        """保存标准化参数"""
+        np.save(path, self.scalers)
+    
+    @staticmethod
+    def load_scalers(path):
+        """加载标准化参数"""
+        return np.load(path, allow_pickle=True)
+    
+    def _augment_batch(self, x_batch):
+        """对批次数据进行增强
+        
+        Args:
+            x_batch: 输入批次数据，形状为(batch_size, time_steps, channels)
+            
+        Returns:
+            增强后的数据
+        """
+        augmented_batch = x_batch.copy()
         for i in range(len(augmented_batch)):
-            # 随机应用以下增强方法
-            if np.random.random() < 0.5:
+            if random.random() < 0.5:  # 50%的概率进行数据增强
                 # 添加高斯噪声
-                noise = np.random.normal(0, 0.01, augmented_batch[i].shape)
+                noise = np.random.normal(0, 0.01, augmented_batch[i].shape).astype(np.float32)
                 augmented_batch[i] = augmented_batch[i] + noise
                 
-            if np.random.random() < 0.3:
-                # 随机时间偏移
-                shift = np.random.randint(-50, 50)
-                augmented_batch[i] = np.roll(augmented_batch[i], shift, axis=0)
-                
-            if np.random.random() < 0.3:
-                # 随机振幅缩放
-                scale = np.random.uniform(0.8, 1.2)
+                # 时间偏移
+                shift = np.random.randint(-3, 4)
+                if shift != 0:
+                    augmented_batch[i] = np.roll(augmented_batch[i], shift, axis=0)
+                    
+                # 振幅缩放
+                scale = np.random.uniform(0.98, 1.02)
                 augmented_batch[i] = augmented_batch[i] * scale
                 
-            if np.random.random() < 0.2:
-                # 随机基线漂移
-                t = np.linspace(0, 1, augmented_batch[i].shape[0])
-                baseline = 0.1 * np.sin(2 * np.pi * t * np.random.uniform(0.1, 0.5))
-                for j in range(augmented_batch[i].shape[1]):
-                    augmented_batch[i, :, j] += baseline
-        
-        return augmented_batch
+                # 基线漂移
+                drift = np.linspace(0, np.random.uniform(-0.02, 0.02), augmented_batch[i].shape[0])
+                drift = drift.reshape(-1, 1).astype(np.float32)
+                augmented_batch[i] = augmented_batch[i] + drift
+                
+        return augmented_batch.astype(np.float32)
 
-    def standardize_batch(self, batch_x):
-        """对批次数据进行标准化"""
-        standardized_batch = np.zeros_like(batch_x)
-        for i in range(12):
-            # 重塑数据以适应StandardScaler
-            lead_data = batch_x[:, :, i].reshape(-1, 1)
-            standardized_lead = self.scalers[i].transform(lead_data)
-            standardized_batch[:, :, i] = standardized_lead.reshape(batch_x.shape[0], -1)
-        return standardized_batch
 
-    def __getitem__(self, idx):
-        start = self.start_idx + idx * self.batch_size
-        end = min(start + self.batch_size, self.end_idx)
-        batch_x = np.array(self.x[start:end])
+class ECGPredictSequence(Sequence):
+    """ECG预测数据生成器，仅用于模型推理阶段"""
+    def __init__(self, data, batch_size=32, scalers=None):
+        """
+        初始化预测数据生成器
         
-        # 应用标准化
-        batch_x = self.standardize_batch(batch_x)
+        Args:
+            data: 心电图数据
+            batch_size: 批次大小
+            scalers: 标准化参数
+        """
+        self.data = data
+        self.batch_size = batch_size
+        self.scalers = scalers
         
-        # 在训练模式下应用数据增强
-        if self.is_training:
-            batch_x = self.apply_data_augmentation(batch_x)
+        # 创建索引数组
+        self.indexes = np.arange(len(data))
         
-        if self.y is None:
-            return batch_x
-            
-        batch_y = np.array(self.y[start:end])
-        return batch_x, batch_y
-
+        # 如果提供了标准化参数，应用它们
+        if self.scalers is not None:
+            for i in range(12):  # 12导联
+                self.data[:, :, i] = self.scalers[i].transform(self.data[:, :, i])
+    
     def __len__(self):
-        return math.ceil((self.end_idx - self.start_idx) / self.batch_size)
-
-    def __del__(self):
-        if self.f is not None and self.close_file:
-            self.f.close()
-
-    def save_scalers(self, save_path):
-        """保存标准化参数"""
-        scaler_params = []
-        for scaler in self.scalers:
-            params = {
-                'mean_': scaler.mean_,
-                'var_': scaler.var_,
-                'scale_': scaler.scale_
-            }
-            scaler_params.append(params)
-        np.save(save_path, scaler_params)
-
-    @classmethod
-    def load_scalers(cls, load_path):
+        """返回批次数"""
+        return int(np.ceil(len(self.data) / self.batch_size))
+    
+    def __getitem__(self, idx):
+        """获取一个批次的数据"""
+        # 获取当前批次的索引
+        batch_indexes = self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size]
+        
+        # 获取当前批次的数据
+        batch_data = self.data[batch_indexes]
+        
+        # 确保数据类型正确
+        batch_data = batch_data.astype(np.float32)
+            
+        return batch_data  # 只返回数据，不返回标签
+    
+    @staticmethod
+    def load_scalers(path):
         """加载标准化参数"""
-        scaler_params = np.load(load_path, allow_pickle=True)
-        scalers = []
-        for params in scaler_params:
-            scaler = StandardScaler()
-            scaler.mean_ = params['mean_']
-            scaler.var_ = params['var_']
-            scaler.scale_ = params['scale_']
-            scalers.append(scaler)
-        return scalers
+        return np.load(path, allow_pickle=True)
+
+
+def load_data(data_dir, reference_file, max_seq_length=1024):
+    """加载PhysioNet数据集，剔除噪声记录
+    
+    参数:
+        data_dir: 数据目录路径
+        reference_file: 标签文件路径
+        max_seq_length: 最大序列长度
+        
+    返回:
+        x_data: ECG数据
+        y_data: 标签 (0: 正常/其他, 1: 房颤)
+    """
+    print(f"正在从 {reference_file} 加载标签文件...")
+    # 读取标签文件
+    df = pd.read_csv(reference_file, header=None, names=['record', 'label'])
+    print(f"标签文件加载完成，共 {len(df)} 条记录")
+    
+    # 初始化数据列表
+    x_data_list = []
+    y_data_list = []
+    
+    # 采样频率
+    fs = 300  # Hz
+    
+    # 遍历所有记录
+    for idx, row in df.iterrows():
+        record_name = row['record']
+        label = row['label']
+        
+        # 跳过噪声记录
+        if label == '~':
+            continue
+            
+        # 读取.mat文件
+        mat_path = os.path.join(data_dir, f"{record_name}.mat")
+        if not os.path.exists(mat_path):
+            print(f"警告: 找不到文件 {mat_path}")
+            continue
+            
+        try:
+            # 加载.mat文件
+            mat_data = loadmat(mat_path)
+            
+            # 获取ECG数据
+            if 'val' in mat_data:
+                ecg_data = mat_data['val']
+                print(f"\n处理文件 {record_name}:")
+                print(f"ECG数据形状: {ecg_data.shape}")
+                
+                # 检查数据格式并调整
+                if ecg_data.shape[0] == 1:  # 单导联数据
+                    # 计算最接近的可以被12整除的长度
+                    n = ecg_data.shape[1]
+                    adjusted_length = (n // 12) * 12
+                    if adjusted_length < n:
+                        print(f"警告: 截断数据从 {n} 到 {adjusted_length} 以确保可被12整除")
+                        ecg_data = ecg_data[:, :adjusted_length]
+                    
+                    # 检查信号是否倒置（通过计算信号均值）
+                    mean_val = np.mean(ecg_data)
+                    if mean_val < 0:
+                        print(f"检测到倒置信号，正在校正...")
+                        ecg_data = -ecg_data
+                    
+                    # 重塑数据为(12, n)格式（复制单导联数据到12个导联）
+                    n_samples = ecg_data.shape[1] // 12
+                    ecg_data = ecg_data.reshape(12, n_samples)
+                    print(f"重塑后的数据形状: {ecg_data.shape}")
+                elif ecg_data.shape[0] != 12:
+                    print(f"警告: {record_name} 不是12导联数据，跳过")
+                    continue
+                
+                # 转置数据以匹配我们的格式 (time_steps, channels)
+                ecg_data = ecg_data.T
+                print(f"转置后的数据形状: {ecg_data.shape}")
+                
+                # 截断或填充序列长度
+                if ecg_data.shape[0] > max_seq_length:
+                    ecg_data = ecg_data[:max_seq_length]
+                    print(f"截断后的数据形状: {ecg_data.shape}")
+                else:
+                    pad_width = ((0, max_seq_length - ecg_data.shape[0]), (0, 0))
+                    ecg_data = np.pad(ecg_data, pad_width, mode='constant')
+                    print(f"填充后的数据形状: {ecg_data.shape}")
+                    
+                # 将标签转换为数值
+                if label == 'A':  # 房颤
+                    y = 1
+                elif label in ['N', 'O']:  # Normal 和 Other
+                    y = 0
+                else:
+                    print(f"警告: 未知标签 {label}，跳过")
+                    continue
+                    
+                x_data_list.append(ecg_data)
+                y_data_list.append(y)
+                
+                if (idx + 1) % 100 == 0:  # 每处理100条记录打印一次进度
+                    print(f"已处理 {idx + 1}/{len(df)} 条记录")
+            else:
+                print(f"警告: {record_name} 中没有找到'val'字段")
+            
+        except Exception as e:
+            print(f"错误: 处理 {record_name} 时出错: {str(e)}")
+            continue
+    
+    # 转换为numpy数组
+    x_data = np.array(x_data_list)
+    y_data = np.array(y_data_list).reshape(-1, 1)
+    
+    print(f"\n数据加载完成:")
+    print(f"成功加载的样本数: {len(x_data)}")
+    print(f"正样本数（房颤）: {np.sum(y_data == 1)}")
+    print(f"负样本数（正常/其他）: {np.sum(y_data == 0)}")
+    print(f"正样本比例: {np.mean(y_data == 1):.4f}")
+    print(f"跳过的样本数: {len(df) - len(x_data)}")
+    
+    if len(x_data) == 0:
+        raise ValueError("没有成功加载任何数据！请检查数据路径和文件格式是否正确。")
+    
+    return x_data, y_data

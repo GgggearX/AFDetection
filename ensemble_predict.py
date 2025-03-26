@@ -5,7 +5,7 @@ import h5py
 from tensorflow.keras.models import load_model
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 import matplotlib.pyplot as plt
-from datasets import ECGSequence
+from datasets import ECGSequence, ECGPredictSequence
 
 def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-LSTM'):
     """加载每个fold的最佳模型"""
@@ -14,11 +14,11 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
     cnn_lstm_models = []
     
     # 加载RNN模型
-    print("\nLoading RNN models:")
+    print("\n加载RNN模型:")
     for fold in range(1, 6):
         model_path = os.path.join(rnn_dir, 'models', f'fold_{fold}', f'model_best_rnn_fold_{fold}.hdf5')
         if os.path.exists(model_path):
-            print(f"Found RNN model for fold {fold}: {model_path}")
+            print(f"找到RNN模型 fold {fold}: {model_path}")
             try:
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
@@ -27,20 +27,20 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     rnn_models.append(model)
-                    print(f"Successfully validated RNN model for fold {fold}")
+                    print(f"成功验证RNN模型 fold {fold}")
                 else:
-                    print(f"Warning: RNN model for fold {fold} has incorrect output shape: {test_output.shape}")
+                    print(f"警告：RNN模型 fold {fold} 输出维度不正确: {test_output.shape}")
             except Exception as e:
-                print(f"Error loading RNN model for fold {fold}: {str(e)}")
+                print(f"加载RNN模型 fold {fold} 时出错: {str(e)}")
         else:
-            print(f"Warning: RNN model for fold {fold} not found at {model_path}")
+            print(f"警告：未找到RNN模型 fold {fold}，路径: {model_path}")
     
     # 加载DenseNet模型
-    print("\nLoading DenseNet models:")
+    print("\n加载DenseNet模型:")
     for fold in range(1, 6):
         model_path = os.path.join(densenet_dir, 'models', f'fold_{fold}', f'model_best_densenet_fold_{fold}.hdf5')
         if os.path.exists(model_path):
-            print(f"Found DenseNet model for fold {fold}: {model_path}")
+            print(f"找到DenseNet模型 fold {fold}: {model_path}")
             try:
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
@@ -49,44 +49,44 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     densenet_models.append(model)
-                    print(f"Successfully validated DenseNet model for fold {fold}")
+                    print(f"成功验证DenseNet模型 fold {fold}")
                 else:
-                    print(f"Warning: DenseNet model for fold {fold} has incorrect output shape: {test_output.shape}")
+                    print(f"警告：DenseNet模型 fold {fold} 输出维度不正确: {test_output.shape}")
             except Exception as e:
-                print(f"Error loading DenseNet model for fold {fold}: {str(e)}")
+                print(f"加载DenseNet模型 fold {fold} 时出错: {str(e)}")
         else:
-            print(f"Warning: DenseNet model for fold {fold} not found at {model_path}")
+            print(f"警告：未找到DenseNet模型 fold {fold}，路径: {model_path}")
     
     # 加载CNN-LSTM模型
-    print("\nLoading CNN-LSTM models:")
+    print("\n加载CNN-LSTM模型:")
     for fold in range(1, 6):
         model_path = os.path.join(cnn_lstm_dir, 'models', f'fold_{fold}', f'model_best_cnn_lstm_fold_{fold}.hdf5')
         if os.path.exists(model_path):
-            print(f"Found CNN-LSTM model for fold {fold}: {model_path}")
+            print(f"找到CNN-LSTM模型 fold {fold}: {model_path}")
             try:
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
                 # 验证模型输出
-                test_input = np.random.random((1, 1024, 12))  # 修改为1024以匹配模型期望的输入维度
+                test_input = np.random.random((1, 4096, 12))  # 修改为4096以匹配新的输入维度
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     cnn_lstm_models.append(model)
-                    print(f"Successfully validated CNN-LSTM model for fold {fold}")
+                    print(f"成功验证CNN-LSTM模型 fold {fold}")
                 else:
-                    print(f"Warning: CNN-LSTM model for fold {fold} has incorrect output shape: {test_output.shape}")
+                    print(f"警告：CNN-LSTM模型 fold {fold} 输出维度不正确: {test_output.shape}")
             except Exception as e:
-                print(f"Error loading CNN-LSTM model for fold {fold}: {str(e)}")
+                print(f"加载CNN-LSTM模型 fold {fold} 时出错: {str(e)}")
         else:
-            print(f"Warning: CNN-LSTM model for fold {fold} not found at {model_path}")
+            print(f"警告：未找到CNN-LSTM模型 fold {fold}，路径: {model_path}")
     
     if len(rnn_models) != 5 or len(densenet_models) != 5 or len(cnn_lstm_models) != 5:
-        print(f"\nWarning: Expected 5 models for each type, but found:")
-        print(f"RNN models: {len(rnn_models)}")
-        print(f"DenseNet models: {len(densenet_models)}")
-        print(f"CNN-LSTM models: {len(cnn_lstm_models)}")
-        print("Please ensure all models are trained and saved correctly.")
+        print(f"\n警告：期望每个类型有5个模型，但实际找到：")
+        print(f"RNN模型: {len(rnn_models)}")
+        print(f"DenseNet模型: {len(densenet_models)}")
+        print(f"CNN-LSTM模型: {len(cnn_lstm_models)}")
+        print("请确保所有模型都已正确训练和保存。")
     
-    print(f"\nSummary: Loaded {len(rnn_models)} RNN models, {len(densenet_models)} DenseNet models, and {len(cnn_lstm_models)} CNN-LSTM models")
+    print(f"\n总结：已加载 {len(rnn_models)} 个RNN模型, {len(densenet_models)} 个DenseNet模型, {len(cnn_lstm_models)} 个CNN-LSTM模型")
     return rnn_models, densenet_models, cnn_lstm_models
 
 def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq_length=4096, model_dir=None):
@@ -107,9 +107,9 @@ def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq
         scaler_path = os.path.join(model_dir, 'models', f'fold_{i+1}', 'scalers.npy')
         if os.path.exists(scaler_path):
             print(f"Loading scalers from: {scaler_path}")
-            scalers = ECGSequence.load_scalers(scaler_path)
+            scalers = ECGPredictSequence.load_scalers(scaler_path)
             # 创建数据生成器，使用加载的标准化器
-            data_sequence = ECGSequence(x_data_model, batch_size=batch_size, is_training=False, scalers=scalers)
+            data_sequence = ECGPredictSequence(x_data_model, batch_size=batch_size, scalers=scalers)
             # 使用model.predict进行预测
             pred = model.predict(data_sequence, verbose=1)
             print(f"Prediction shape: {pred.shape}, range: [{pred.min():.3f}, {pred.max():.3f}]")
@@ -124,27 +124,27 @@ def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq
 
 def ensemble_predict(x_data, rnn_models, densenet_models, cnn_lstm_models, batch_size=32):
     """集成RNN、DenseNet和CNN-LSTM的预测结果"""
-    print("\nPreparing predictions...")
+    print("\n准备预测...")
     
     # 获取三种模型的预测
-    print("\nRNN predictions (sequence length: 4096)...")
+    print("\nRNN预测 (序列长度: 4096)...")
     rnn_pred = predict_with_models(rnn_models, x_data, batch_size, "RNN", seq_length=4096, model_dir='RNN')
     
-    print("\nDenseNet predictions (sequence length: 4096)...")
+    print("\nDenseNet预测 (序列长度: 4096)...")
     densenet_pred = predict_with_models(densenet_models, x_data, batch_size, "DenseNet", seq_length=4096, model_dir='DenseNet')
     
-    print("\nCNN-LSTM predictions (sequence length: 1024)...")
-    cnn_lstm_pred = predict_with_models(cnn_lstm_models, x_data, batch_size, "CNN-LSTM", seq_length=1024, model_dir='CNN-LSTM')
+    print("\nCNN-LSTM预测 (序列长度: 4096)...")
+    cnn_lstm_pred = predict_with_models(cnn_lstm_models, x_data, batch_size, "CNN-LSTM", seq_length=4096, model_dir='CNN-LSTM')
     
     if rnn_pred is None or densenet_pred is None or cnn_lstm_pred is None:
-        print("Error: One or more model types failed to produce predictions")
+        print("错误：一个或多个模型预测失败")
         return None, rnn_pred, densenet_pred, cnn_lstm_pred
     
     # 加权平均（可以调整权重）
-    print("\nComputing ensemble predictions...")
+    print("\n计算集成预测结果...")
     weights = [0.3, 0.3, 0.4]  # 给CNN-LSTM稍微高一点的权重，因为它是最新优化的模型
     ensemble_pred = (weights[0] * rnn_pred + weights[1] * densenet_pred + weights[2] * cnn_lstm_pred)
-    print(f"Ensemble prediction shape: {ensemble_pred.shape}, range: [{ensemble_pred.min():.3f}, {ensemble_pred.max():.3f}]")
+    print(f"集成预测形状: {ensemble_pred.shape}, 范围: [{ensemble_pred.min():.3f}, {ensemble_pred.max():.3f}]")
     
     return ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred
 
@@ -198,26 +198,31 @@ def main():
     # 创建输出目录
     os.makedirs('outputs', exist_ok=True)
     
-    # 加载数据
-    with h5py.File('data/ecg_tracings.hdf5', 'r') as f:
-        x_data = f['tracings'][:]
+    # 设置默认路径
+    default_data_dir = 'data/physionet/training2017'
+    default_reference_file = 'data/REFERENCE-v3.csv'
     
-    # 加载标签
-    labels_df = pd.read_csv('data/annotations/gold_standard.csv')
-    y_true = labels_df['AF'].values
+    # 加载数据
+    print("加载数据...")
+    from datasets import load_data
+    x_data, y_true = load_data(default_data_dir, default_reference_file, max_seq_length=4096)
     
     # 加载模型
-    print("Loading models...")
+    print("加载模型...")
     rnn_models, densenet_models, cnn_lstm_models = load_best_models()
     
     if len(rnn_models) == 0 or len(densenet_models) == 0 or len(cnn_lstm_models) == 0:
-        print("Error: No models found. Please ensure all models are trained and saved correctly.")
+        print("错误：未找到模型。请确保所有模型都已正确训练和保存。")
         return
     
     # 进行预测
-    print("Making predictions...")
+    print("开始预测...")
     ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred = ensemble_predict(
         x_data, rnn_models, densenet_models, cnn_lstm_models)
+    
+    if ensemble_pred is None:
+        print("错误：预测失败。请检查模型和数据格式。")
+        return
     
     # 保存预测结果
     results_df = pd.DataFrame({
@@ -225,16 +230,16 @@ def main():
         'DenseNet_Prediction': densenet_pred.flatten(),
         'CNN-LSTM_Prediction': cnn_lstm_pred.flatten(),
         'Ensemble_Prediction': ensemble_pred.flatten(),
-        'True_Label': y_true
+        'True_Label': y_true.flatten()
     })
     results_df.to_csv('outputs/predictions.csv', index=False)
     
     # 绘制评估图表
-    print("Generating evaluation plots...")
-    plot_roc_curves(y_true, rnn_pred.flatten(), 
+    print("生成评估图表...")
+    plot_roc_curves(y_true.flatten(), rnn_pred.flatten(), 
                    densenet_pred.flatten(), cnn_lstm_pred.flatten(),
                    ensemble_pred.flatten())
-    plot_precision_recall_curves(y_true, rnn_pred.flatten(), 
+    plot_precision_recall_curves(y_true.flatten(), rnn_pred.flatten(), 
                                densenet_pred.flatten(), cnn_lstm_pred.flatten(),
                                ensemble_pred.flatten())
     
@@ -242,7 +247,7 @@ def main():
     print("\n模型评估结果:")
     for name, pred in [('RNN', rnn_pred), ('DenseNet', densenet_pred), 
                       ('CNN-LSTM', cnn_lstm_pred), ('Ensemble', ensemble_pred)]:
-        ap_score = average_precision_score(y_true, pred)
+        ap_score = average_precision_score(y_true.flatten(), pred.flatten())
         print(f"{name} Average Precision: {ap_score:.3f}")
 
 if __name__ == "__main__":
