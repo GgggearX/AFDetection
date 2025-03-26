@@ -8,7 +8,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras import regularizers
 import numpy as np
 
-def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
+def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid', n_leads=12):
     """
     在原有基础上进行了深度和功能的增强版本，用于心电信号分类或其他长序列任务。
     主要变化和改进：
@@ -22,6 +22,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     - max_seq_length: 输入序列的最大长度，默认为4096
     - n_classes: 输出类别数，默认为1 (二分类)
     - last_layer: 最后一层的激活函数，默认为'sigmoid'
+    - n_leads: 导联数，默认为12
     
     返回:
     - Keras模型实例 (tf.keras.Model)
@@ -30,7 +31,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     #-----------------------------
     # 1. 输入层
     #-----------------------------
-    signal = Input(shape=(max_seq_length, 12), dtype=np.float32, name='signal')
+    signal = Input(shape=(max_seq_length, n_leads), dtype=np.float32, name='signal')
 
     #-----------------------------
     # 2. 前置卷积与初步下采样

@@ -39,7 +39,7 @@ def transition_layer(x, reduction):
     x = AveragePooling1D(pool_size=2, strides=2)(x)
     return x
 
-def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
+def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid', n_leads=12):
     """
     创建简化版DenseNet模型
     
@@ -47,6 +47,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     - max_seq_length: 输入序列的最大长度，默认为4096
     - n_classes: 输出类别数，默认为1（二分类）
     - last_layer: 最后一层的激活函数，默认为'sigmoid'
+    - n_leads: 导联数，默认为12
     """
     # 简化的模型参数
     growth_rate = 16  # 减少特征增长率
@@ -54,7 +55,7 @@ def get_model(max_seq_length=4096, n_classes=1, last_layer='sigmoid'):
     reduction = 0.5
     
     # 输入层
-    inputs = Input(shape=(max_seq_length, 12), dtype=np.float32, name='signal')
+    inputs = Input(shape=(max_seq_length, n_leads), dtype=np.float32, name='signal')
     
     # 初始卷积层
     x = Conv1D(32, 7, strides=2, padding='same', use_bias=False)(inputs)

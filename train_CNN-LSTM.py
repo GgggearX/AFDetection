@@ -159,7 +159,13 @@ def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
                 print()  # 换行
 
     # 编译模型
-    model = get_model(max_seq_length=x_data.shape[1], n_classes=1)
+    n_leads = x_train.shape[2]  # 获取导联数
+    model = get_model(
+        max_seq_length=x_data.shape[1],
+        n_classes=1,
+        last_layer='sigmoid',
+        n_leads=n_leads
+    )
     model.compile(
         optimizer=Adam(learning_rate=args.learning_rate * 0.5),  # 降低初始学习率
         loss=focal_loss(gamma=2.0, alpha=0.35),  # 降低alpha值，减少对正样本的过度关注

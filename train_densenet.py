@@ -84,36 +84,38 @@ def create_model_save_path(base_dir, fold):
     os.makedirs(model_dir, exist_ok=True)
     return model_dir
 
-def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
-    """训练单个折"""
-    # 创建模型和日志目录
-    model_dir = os.path.join(base_dir, 'models', f'fold_{fold}')
-    log_dir = os.path.join(base_dir, 'logs', f'fold_{fold}')
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
+def train_fold(x_data, y_data, fold, args):
+    """训练单个fold的模型"""
+    print(f"\n开始训练 fold {fold}")
     
-    # 准备训练和验证数据
-    x_train = x_data[train_idx]
-    y_train = y_data[train_idx]
-    x_val = x_data[val_idx]
-    y_val = y_data[val_idx]
+    # 创建模型保存路径
+    model_dir = create_model_save_path(args.model_dir, fold)
+    
+    # 计算类别权重
+    unique_classes = np.unique(y_data)
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=unique_classes,
+        y=y_data.flatten()
+    )
+    class_weight_dict = dict(zip(unique_classes, class_weights))
+    
+    # 创建模型
+    n_leads = x_data.shape[2]  # 获取导联数
+    model = get_model(
+        max_seq_length=args.max_seq_length,
+        n_classes=1,
+        last_layer='sigmoid',
+        n_leads=n_leads
+    )
     
     # 创建数据生成器
-    train_seq = ECGSequence(x_train, y_train, batch_size=args.batch_size)
-    val_seq = ECGSequence(x_val, y_val, batch_size=args.batch_size, scalers=train_seq.scalers)
+    train_seq = ECGSequence(x_data, y_data, batch_size=args.batch_size)
+    val_seq = ECGSequence(x_data, y_data, batch_size=args.batch_size, scalers=train_seq.scalers)
     
     # 保存标准化参数
     scaler_path = os.path.join(model_dir, 'scalers.npy')
     train_seq.save_scalers(scaler_path)
-    
-    # 计算类别权重
-    unique_classes = np.unique(y_train)
-    class_weights = compute_class_weight(
-        class_weight='balanced',
-        classes=unique_classes,
-        y=y_train.flatten()  # 将numpy数组展平并转换为列表
-    )
-    class_weight_dict = dict(enumerate(class_weights))
     
     # 创建自定义回调来显示训练进度
     class ProgressCallback(tf.keras.callbacks.Callback):
@@ -150,7 +152,6 @@ def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
                 print()  # 换行
 
     # 编译模型
-    model = get_model(max_seq_length=x_data.shape[1], n_classes=1)
     model.compile(
         optimizer=Adam(learning_rate=args.learning_rate),
         loss=focal_loss(),
@@ -177,11 +178,11 @@ def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
             mode='min'
         ),
         TensorBoard(
-            log_dir=log_dir,
+            log_dir=os.path.join(model_dir, 'logs'),
             histogram_freq=1
         ),
         CSVLogger(
-            os.path.join(log_dir, f'training_fold_{fold}.csv')
+            os.path.join(model_dir, f'training_fold_{fold}.csv')
         ),
         ProgressCallback()  # 添加进度条回调
     ]
@@ -322,6 +323,8 @@ def main():
     parser.add_argument('--epochs', type=int, default=150, help='训练轮数')
     parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
+    parser.add_argument('--max_seq_length', type=int, default=1024, help='最大序列长度')
+    parser.add_argument('--model_dir', type=str, default='models/densenet', help='模型保存目录')
     args = parser.parse_args()
     
     # 加载数据
@@ -329,8 +332,7 @@ def main():
     x_data, y_data = load_data(args.data_dir, args.reference_file)
     
     # 创建输出目录
-    output_dir = 'models/densenet'
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.model_dir, exist_ok=True)
     
     # 设置交叉验证
     kf = StratifiedKFold(n_splits=args.n_splits, shuffle=True, random_state=42)
@@ -351,10 +353,10 @@ def main():
         val_sequence = ECGSequence(x_val, y_val, batch_size=args.batch_size, use_augmentation=False)
         
         # 创建模型
-        model, history = train_fold(x_data, y_data, train_idx, val_idx, fold, args, output_dir)
+        model, history = train_fold(x_data, y_data, fold, args)
         
         # 保存模型
-        model.save(os.path.join(output_dir, f'densenet_model_fold_{fold}.h5'))
+        model.save(os.path.join(args.model_dir, f'densenet_model_fold_{fold}.h5'))
         
         # 评估模型
         val_loss, val_acc, val_auc = model.evaluate(val_sequence)

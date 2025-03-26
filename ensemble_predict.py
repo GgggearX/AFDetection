@@ -23,7 +23,9 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
                 # 验证模型输出
-                test_input = np.random.random((1, 4096, 12))
+                # 使用模型输入形状创建测试输入
+                input_shape = model.input_shape[1:]  # 获取输入形状，排除batch维度
+                test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     rnn_models.append(model)
@@ -45,7 +47,8 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
                 # 验证模型输出
-                test_input = np.random.random((1, 4096, 12))
+                input_shape = model.input_shape[1:]
+                test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     densenet_models.append(model)
@@ -67,7 +70,8 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
                 # 验证模型输出
-                test_input = np.random.random((1, 4096, 12))  # 修改为4096以匹配新的输入维度
+                input_shape = model.input_shape[1:]
+                test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
                     cnn_lstm_models.append(model)

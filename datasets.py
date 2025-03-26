@@ -140,7 +140,8 @@ class ECGPredictSequence(Sequence):
         
         # 如果提供了标准化参数，应用它们
         if self.scalers is not None:
-            for i in range(12):  # 12导联
+            n_leads = data.shape[2]  # 获取导联数
+            for i in range(n_leads):
                 self.data[:, :, i] = self.scalers[i].transform(self.data[:, :, i])
     
     def __len__(self):
@@ -216,27 +217,8 @@ def load_data(data_dir, reference_file, max_seq_length=1024):
                 print(f"ECG数据形状: {ecg_data.shape}")
                 
                 # 检查数据格式并调整
-                if ecg_data.shape[0] == 1:  # 单导联数据
-                    # 计算最接近的可以被12整除的长度
-                    n = ecg_data.shape[1]
-                    adjusted_length = (n // 12) * 12
-                    if adjusted_length < n:
-                        print(f"警告: 截断数据从 {n} 到 {adjusted_length} 以确保可被12整除")
-                        ecg_data = ecg_data[:, :adjusted_length]
-                    
-                    # 检查信号是否倒置（通过计算信号均值）
-                    mean_val = np.mean(ecg_data)
-                    if mean_val < 0:
-                        print(f"检测到倒置信号，正在校正...")
-                        ecg_data = -ecg_data
-                    
-                    # 重塑数据为(12, n)格式（复制单导联数据到12个导联）
-                    n_samples = ecg_data.shape[1] // 12
-                    ecg_data = ecg_data.reshape(12, n_samples)
-                    print(f"重塑后的数据形状: {ecg_data.shape}")
-                elif ecg_data.shape[0] != 12:
-                    print(f"警告: {record_name} 不是12导联数据，跳过")
-                    continue
+                n_leads = ecg_data.shape[0]  # 获取导联数
+                print(f"导联数: {n_leads}")
                 
                 # 转置数据以匹配我们的格式 (time_steps, channels)
                 ecg_data = ecg_data.T

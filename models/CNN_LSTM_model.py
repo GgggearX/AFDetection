@@ -7,7 +7,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
 import numpy as np
 
-def get_model(max_seq_length=1024, n_classes=1, last_layer='sigmoid'):
+def get_model(max_seq_length=1024, n_classes=1, last_layer='sigmoid', n_leads=12):
     """
     创建简化版CNN-LSTM模型
     
@@ -15,9 +15,10 @@ def get_model(max_seq_length=1024, n_classes=1, last_layer='sigmoid'):
     - max_seq_length: 输入序列的最大长度，默认为1024
     - n_classes: 输出类别数，默认为1（二分类）
     - last_layer: 最后一层的激活函数，默认为'sigmoid'
+    - n_leads: 导联数，默认为12
     """
     # 输入层
-    signal = Input(shape=(max_seq_length, 12), dtype=np.float32, name='signal')
+    signal = Input(shape=(max_seq_length, n_leads), dtype=np.float32, name='signal')
     
     # CNN部分 - 3个简单的卷积块
     # 第一个卷积块

@@ -52,32 +52,30 @@ def create_model_save_path(base_dir, fold):
     os.makedirs(model_dir, exist_ok=True)
     return model_dir
 
-def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
-    """训练单个折的数据"""
-    # 准备训练和验证数据
-    x_train = x_data[train_idx]
-    y_train = y_data[train_idx]
-    x_val = x_data[val_idx]
-    y_val = y_data[val_idx]
+def train_fold(x_data, y_data, fold, args):
+    """训练单个fold的模型"""
+    print(f"\n开始训练 fold {fold}")
     
-    # 创建数据生成器
-    train_sequence = ECGSequence(
-        x_train, y_train,
-        batch_size=args.batch_size,
-        shuffle=True,
-        use_augmentation=True  # 启用数据增强
-    )
+    # 创建模型保存路径
+    model_dir = create_model_save_path(args.model_dir, fold)
     
-    val_sequence = ECGSequence(
-        x_val, y_val,
-        batch_size=args.batch_size,
-        shuffle=False,
-        scalers=train_sequence.scalers,
-        use_augmentation=False  # 验证集不使用数据增强
+    # 计算类别权重
+    unique_classes = np.unique(y_data)
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=unique_classes,
+        y=y_data.flatten()
     )
+    class_weight_dict = dict(zip(unique_classes, class_weights))
     
     # 创建模型
-    model = get_model(max_seq_length=args.max_seq_length)
+    n_leads = x_data.shape[2]  # 获取导联数
+    model = get_model(
+        max_seq_length=args.max_seq_length,
+        n_classes=1,
+        last_layer='sigmoid',
+        n_leads=n_leads
+    )
     
     # 编译模型
     model.compile(
@@ -133,11 +131,7 @@ def train_fold(x_data, y_data, train_idx, val_idx, fold, args, base_dir):
             EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True),
             ProgressCallback()
         ],
-        class_weight=dict(enumerate(compute_class_weight(
-            class_weight='balanced',
-            classes=np.unique(y_train),
-            y=y_train.ravel()
-        ))),
+        class_weight=class_weight_dict,
         verbose=0  # 设置为0，使用自定义输出
     )
     
@@ -272,6 +266,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
     parser.add_argument('--max_seq_length', type=int, default=4096, help='最大序列长度')
+    parser.add_argument('--model_dir', type=str, default='models/rnn', help='模型保存目录')
     args = parser.parse_args()
     
     # 加载数据
@@ -293,7 +288,7 @@ def main():
         print(f"\n开始训练第 {fold} 折...")
         
         # 训练模型
-        model, history, val_sequence, val_loss, val_acc, val_auc, val_f1 = train_fold(x_data, y_data, train_idx, val_idx, fold, args, output_dir)
+        model, history, val_sequence, val_loss, val_acc, val_auc, val_f1 = train_fold(x_data, y_data, fold, args)
         
         # 保存模型
         model.save(os.path.join(output_dir, f'rnn_model_fold_{fold}.h5'))
