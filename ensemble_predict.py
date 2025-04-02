@@ -7,11 +7,12 @@ from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_prec
 import matplotlib.pyplot as plt
 from datasets import ECGSequence, ECGPredictSequence
 
-def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-LSTM'):
+def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-LSTM', wavenet_dir='outputs/wavenet'):
     """加载每个fold的最佳模型"""
     rnn_models = []
     densenet_models = []
     cnn_lstm_models = []
+    wavenet_models = []
     
     # 加载RNN模型
     print("\n加载RNN模型:")
@@ -23,8 +24,7 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
                 # 验证模型输出
-                # 使用模型输入形状创建测试输入
-                input_shape = model.input_shape[1:]  # 获取输入形状，排除batch维度
+                input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
                 if test_output.shape == (1, 1):
@@ -46,7 +46,6 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
             try:
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
-                # 验证模型输出
                 input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
@@ -69,7 +68,6 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
             try:
                 model = load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
-                # 验证模型输出
                 input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
@@ -83,15 +81,37 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
         else:
             print(f"警告：未找到CNN-LSTM模型 fold {fold}，路径: {model_path}")
     
-    if len(rnn_models) != 5 or len(densenet_models) != 5 or len(cnn_lstm_models) != 5:
-        print(f"\n警告：期望每个类型有5个模型，但实际找到：")
+    # 加载WaveNet模型
+    print("\n加载WaveNet模型:")
+    model_path = os.path.join(wavenet_dir, 'checkpoints', 'wavenet_model_best.h5')
+    if os.path.exists(model_path):
+        print(f"找到WaveNet模型: {model_path}")
+        try:
+            model = load_model(model_path, compile=False)
+            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
+            input_shape = model.input_shape[1:]
+            test_input = np.random.random((1,) + input_shape)
+            test_output = model.predict(test_input, verbose=0)
+            if test_output.shape == (1, 1):
+                wavenet_models.append(model)
+                print("成功验证WaveNet模型")
+            else:
+                print(f"警告：WaveNet模型输出维度不正确: {test_output.shape}")
+        except Exception as e:
+            print(f"加载WaveNet模型时出错: {str(e)}")
+    else:
+        print(f"警告：未找到WaveNet模型，路径: {model_path}")
+    
+    if len(rnn_models) != 5 or len(densenet_models) != 5 or len(cnn_lstm_models) != 5 or len(wavenet_models) != 1:
+        print(f"\n警告：期望每个类型有指定数量的模型，但实际找到：")
         print(f"RNN模型: {len(rnn_models)}")
         print(f"DenseNet模型: {len(densenet_models)}")
         print(f"CNN-LSTM模型: {len(cnn_lstm_models)}")
+        print(f"WaveNet模型: {len(wavenet_models)}")
         print("请确保所有模型都已正确训练和保存。")
     
-    print(f"\n总结：已加载 {len(rnn_models)} 个RNN模型, {len(densenet_models)} 个DenseNet模型, {len(cnn_lstm_models)} 个CNN-LSTM模型")
-    return rnn_models, densenet_models, cnn_lstm_models
+    print(f"\n总结：已加载 {len(rnn_models)} 个RNN模型, {len(densenet_models)} 个DenseNet模型, {len(cnn_lstm_models)} 个CNN-LSTM模型, {len(wavenet_models)} 个WaveNet模型")
+    return rnn_models, densenet_models, cnn_lstm_models, wavenet_models
 
 def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq_length=4096, model_dir=None):
     """使用多个模型进行预测并平均结果"""
@@ -108,7 +128,7 @@ def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq
     for i, model in enumerate(models):
         print(f"Running prediction with {model_type} model {i+1}/{len(models)}")
         # 加载对应的标准化参数
-        scaler_path = os.path.join(model_dir, 'models', f'fold_{i+1}', 'scalers.npy')
+        scaler_path = os.path.join(model_dir, 'models', f'fold_{i+1}', 'scalers.npy') if model_type != 'WaveNet' else os.path.join(model_dir, 'scalers.npy')
         if os.path.exists(scaler_path):
             print(f"Loading scalers from: {scaler_path}")
             scalers = ECGPredictSequence.load_scalers(scaler_path)
@@ -126,11 +146,11 @@ def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq
     print(f"Mean {model_type} prediction shape: {mean_pred.shape}, range: [{mean_pred.min():.3f}, {mean_pred.max():.3f}]")
     return mean_pred
 
-def ensemble_predict(x_data, rnn_models, densenet_models, cnn_lstm_models, batch_size=32):
-    """集成RNN、DenseNet和CNN-LSTM的预测结果"""
+def ensemble_predict(x_data, rnn_models, densenet_models, cnn_lstm_models, wavenet_models, batch_size=32):
+    """集成RNN、DenseNet、CNN-LSTM和WaveNet的预测结果"""
     print("\n准备预测...")
     
-    # 获取三种模型的预测
+    # 获取四种模型的预测
     print("\nRNN预测 (序列长度: 4096)...")
     rnn_pred = predict_with_models(rnn_models, x_data, batch_size, "RNN", seq_length=4096, model_dir='RNN')
     
@@ -140,19 +160,23 @@ def ensemble_predict(x_data, rnn_models, densenet_models, cnn_lstm_models, batch
     print("\nCNN-LSTM预测 (序列长度: 4096)...")
     cnn_lstm_pred = predict_with_models(cnn_lstm_models, x_data, batch_size, "CNN-LSTM", seq_length=4096, model_dir='CNN-LSTM')
     
-    if rnn_pred is None or densenet_pred is None or cnn_lstm_pred is None:
-        print("错误：一个或多个模型预测失败")
-        return None, rnn_pred, densenet_pred, cnn_lstm_pred
+    print("\nWaveNet预测 (序列长度: 4096)...")
+    wavenet_pred = predict_with_models(wavenet_models, x_data, batch_size, "WaveNet", seq_length=4096, model_dir='outputs/wavenet')
     
-    # 加权平均（可以调整权重）
+    if rnn_pred is None or densenet_pred is None or cnn_lstm_pred is None or wavenet_pred is None:
+        print("错误：一个或多个模型预测失败")
+        return None, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred
+    
+    # 加权平均
     print("\n计算集成预测结果...")
-    weights = [0.3, 0.3, 0.4]  # 给CNN-LSTM稍微高一点的权重，因为它是最新优化的模型
-    ensemble_pred = (weights[0] * rnn_pred + weights[1] * densenet_pred + weights[2] * cnn_lstm_pred)
+    weights = [0.2, 0.2, 0.3, 0.3]  # 给CNN-LSTM和WaveNet稍微高一点的权重
+    ensemble_pred = (weights[0] * rnn_pred + weights[1] * densenet_pred + 
+                    weights[2] * cnn_lstm_pred + weights[3] * wavenet_pred)
     print(f"集成预测形状: {ensemble_pred.shape}, 范围: [{ensemble_pred.min():.3f}, {ensemble_pred.max():.3f}]")
     
-    return ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred
+    return ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred
 
-def plot_roc_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, ensemble_pred):
+def plot_roc_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred, ensemble_pred):
     """绘制ROC曲线"""
     plt.figure(figsize=(10, 8))
     
@@ -160,6 +184,7 @@ def plot_roc_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, ensemble_pre
     for pred, label, color in [(rnn_pred, 'RNN', 'blue'),
                               (densenet_pred, 'DenseNet', 'red'),
                               (cnn_lstm_pred, 'CNN-LSTM', 'orange'),
+                              (wavenet_pred, 'WaveNet', 'purple'),
                               (ensemble_pred, 'Ensemble', 'green')]:
         fpr, tpr, _ = roc_curve(y_true, pred)
         roc_auc = auc(fpr, tpr)
@@ -175,7 +200,7 @@ def plot_roc_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, ensemble_pre
     plt.savefig('outputs/roc_curves.png')
     plt.close()
 
-def plot_precision_recall_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, ensemble_pred):
+def plot_precision_recall_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred, ensemble_pred):
     """绘制PR曲线"""
     plt.figure(figsize=(10, 8))
     
@@ -183,6 +208,7 @@ def plot_precision_recall_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred,
     for pred, label, color in [(rnn_pred, 'RNN', 'blue'),
                               (densenet_pred, 'DenseNet', 'red'),
                               (cnn_lstm_pred, 'CNN-LSTM', 'orange'),
+                              (wavenet_pred, 'WaveNet', 'purple'),
                               (ensemble_pred, 'Ensemble', 'green')]:
         precision, recall, _ = precision_recall_curve(y_true, pred)
         avg_precision = average_precision_score(y_true, pred)
@@ -213,16 +239,16 @@ def main():
     
     # 加载模型
     print("加载模型...")
-    rnn_models, densenet_models, cnn_lstm_models = load_best_models()
+    rnn_models, densenet_models, cnn_lstm_models, wavenet_models = load_best_models()
     
-    if len(rnn_models) == 0 or len(densenet_models) == 0 or len(cnn_lstm_models) == 0:
+    if len(rnn_models) == 0 or len(densenet_models) == 0 or len(cnn_lstm_models) == 0 or len(wavenet_models) == 0:
         print("错误：未找到模型。请确保所有模型都已正确训练和保存。")
         return
     
     # 进行预测
     print("开始预测...")
-    ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred = ensemble_predict(
-        x_data, rnn_models, densenet_models, cnn_lstm_models)
+    ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred = ensemble_predict(
+        x_data, rnn_models, densenet_models, cnn_lstm_models, wavenet_models)
     
     if ensemble_pred is None:
         print("错误：预测失败。请检查模型和数据格式。")
@@ -233,6 +259,7 @@ def main():
         'RNN_Prediction': rnn_pred.flatten(),
         'DenseNet_Prediction': densenet_pred.flatten(),
         'CNN-LSTM_Prediction': cnn_lstm_pred.flatten(),
+        'WaveNet_Prediction': wavenet_pred.flatten(),
         'Ensemble_Prediction': ensemble_pred.flatten(),
         'True_Label': y_true.flatten()
     })
@@ -242,17 +269,30 @@ def main():
     print("生成评估图表...")
     plot_roc_curves(y_true.flatten(), rnn_pred.flatten(), 
                    densenet_pred.flatten(), cnn_lstm_pred.flatten(),
-                   ensemble_pred.flatten())
+                   wavenet_pred.flatten(), ensemble_pred.flatten())
     plot_precision_recall_curves(y_true.flatten(), rnn_pred.flatten(), 
                                densenet_pred.flatten(), cnn_lstm_pred.flatten(),
-                               ensemble_pred.flatten())
+                               wavenet_pred.flatten(), ensemble_pred.flatten())
     
     # 打印评估指标
-    print("\n模型评估结果:")
-    for name, pred in [('RNN', rnn_pred), ('DenseNet', densenet_pred), 
-                      ('CNN-LSTM', cnn_lstm_pred), ('Ensemble', ensemble_pred)]:
-        ap_score = average_precision_score(y_true.flatten(), pred.flatten())
-        print(f"{name} Average Precision: {ap_score:.3f}")
+    print("\n模型评估指标:")
+    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'WaveNet', 'Ensemble']:
+        pred = results_df[f'{model}_Prediction']
+        true = results_df['True_Label']
+        
+        # 计算指标
+        auc_score = roc_auc_score(true, pred)
+        ap_score = average_precision_score(true, pred)
+        f1 = f1_score(true, pred > 0.5)
+        precision = precision_score(true, pred > 0.5)
+        recall = recall_score(true, pred > 0.5)
+        
+        print(f"\n{model} 模型:")
+        print(f"AUC: {auc_score:.3f}")
+        print(f"Average Precision: {ap_score:.3f}")
+        print(f"F1 Score: {f1:.3f}")
+        print(f"Precision: {precision:.3f}")
+        print(f"Recall: {recall:.3f}")
 
 if __name__ == "__main__":
     main()

@@ -88,34 +88,22 @@ class ECGSequence(Sequence):
         return np.load(path, allow_pickle=True)
     
     def _augment_batch(self, x_batch):
-        """对批次数据进行增强
-        
-        Args:
-            x_batch: 输入批次数据，形状为(batch_size, time_steps, channels)
-            
-        Returns:
-            增强后的数据
-        """
+        """对批次数据进行增强"""
         augmented_batch = x_batch.copy()
         for i in range(len(augmented_batch)):
-            if random.random() < 0.5:  # 50%的概率进行数据增强
-                # 添加高斯噪声
-                noise = np.random.normal(0, 0.01, augmented_batch[i].shape).astype(np.float32)
+            if random.random() < 0.3:  # 降低增强概率到30%
+                # 添加轻微的高斯噪声
+                noise = np.random.normal(0, 0.005, augmented_batch[i].shape).astype(np.float32)
                 augmented_batch[i] = augmented_batch[i] + noise
                 
-                # 时间偏移
-                shift = np.random.randint(-3, 4)
+                # 轻微的时间偏移
+                shift = np.random.randint(-2, 3)
                 if shift != 0:
                     augmented_batch[i] = np.roll(augmented_batch[i], shift, axis=0)
                     
-                # 振幅缩放
-                scale = np.random.uniform(0.98, 1.02)
+                # 轻微的振幅缩放
+                scale = np.random.uniform(0.99, 1.01)
                 augmented_batch[i] = augmented_batch[i] * scale
-                
-                # 基线漂移
-                drift = np.linspace(0, np.random.uniform(-0.02, 0.02), augmented_batch[i].shape[0])
-                drift = drift.reshape(-1, 1).astype(np.float32)
-                augmented_batch[i] = augmented_batch[i] + drift
                 
         return augmented_batch.astype(np.float32)
 

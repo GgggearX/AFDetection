@@ -1,5 +1,5 @@
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from tensorflow.keras.metrics import AUC, Precision, Recall
 from models.rnn_model import get_model
 import argparse
@@ -52,9 +52,15 @@ def create_model_save_path(base_dir, fold):
     os.makedirs(model_dir, exist_ok=True)
     return model_dir
 
-def train_fold(x_data, y_data, fold, args):
+def train_fold(x_data, y_data, train_idx, val_idx, fold, args):
     """训练单个fold的模型"""
     print(f"\n开始训练 fold {fold}")
+    
+    # 准备训练和验证数据
+    x_train = x_data[train_idx]
+    y_train = y_data[train_idx]
+    x_val = x_data[val_idx]
+    y_val = y_data[val_idx]
     
     # 创建模型保存路径
     model_dir = create_model_save_path(args.model_dir, fold)
@@ -68,8 +74,28 @@ def train_fold(x_data, y_data, fold, args):
     )
     class_weight_dict = dict(zip(unique_classes, class_weights))
     
+    # 创建数据生成器
+    train_sequence = ECGSequence(
+        x_train, y_train,
+        batch_size=args.batch_size,
+        shuffle=True,
+        use_augmentation=True
+    )
+    
+    val_sequence = ECGSequence(
+        x_val, y_val,
+        batch_size=args.batch_size,
+        shuffle=False,
+        scalers=train_sequence.scalers,
+        use_augmentation=False
+    )
+    
+    # 保存标准化参数
+    scaler_path = os.path.join(model_dir, 'scalers.npy')
+    train_sequence.save_scalers(scaler_path)
+    
     # 创建模型
-    n_leads = x_data.shape[2]  # 获取导联数
+    n_leads = x_data.shape[2]
     model = get_model(
         max_seq_length=args.max_seq_length,
         n_classes=1,
@@ -81,8 +107,7 @@ def train_fold(x_data, y_data, fold, args):
     model.compile(
         optimizer=Adam(learning_rate=args.learning_rate),
         loss=focal_loss(gamma=2.0, alpha=0.25),
-        metrics=['accuracy', AUC(), Precision(), Recall()],
-        run_eagerly=False  # 禁用即时执行模式
+        metrics=['accuracy', AUC(), Precision(), Recall(), f1_score, f1_score_at_05]
     )
     
     # 创建自定义回调来显示训练进度
@@ -122,24 +147,40 @@ def train_fold(x_data, y_data, fold, args):
     # 禁用 TensorFlow 的默认输出
     tf.get_logger().setLevel('ERROR')
     
+    # 设置回调函数
+    callbacks = [
+        EarlyStopping(
+            monitor='val_f1_score',
+            patience=20,
+            restore_best_weights=True
+        ),
+        ReduceLROnPlateau(
+            monitor='val_f1_score',
+            factor=0.5,
+            patience=10,
+            mode='max',
+            min_lr=1e-6
+        ),
+        ModelCheckpoint(
+            os.path.join(model_dir, f'model_best_rnn_fold_{fold}.hdf5'),
+            monitor='val_f1_score',
+            save_best_only=True,
+            mode='max'
+        ),
+        ProgressCallback()
+    ]
+    
     # 训练模型
     history = model.fit(
         train_sequence,
         validation_data=val_sequence,
         epochs=args.epochs,
-        callbacks=[
-            EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True),
-            ProgressCallback()
-        ],
+        callbacks=callbacks,
         class_weight=class_weight_dict,
-        verbose=0  # 设置为0，使用自定义输出
+        verbose=0
     )
     
-    # 评估模型
-    val_loss, val_acc, val_auc, val_precision, val_recall = model.evaluate(val_sequence, verbose=0)
-    val_f1 = 2 * (val_precision * val_recall) / (val_precision + val_recall)
-    
-    return model, history, val_sequence, val_loss, val_acc, val_auc, val_f1
+    return model, history, val_sequence
 
 def load_data(data_dir, reference_file, max_seq_length=1024):
     """加载PhysioNet数据集，剔除噪声记录
@@ -288,20 +329,24 @@ def main():
         print(f"\n开始训练第 {fold} 折...")
         
         # 训练模型
-        model, history, val_sequence, val_loss, val_acc, val_auc, val_f1 = train_fold(x_data, y_data, fold, args)
+        model, history, val_sequence = train_fold(
+            x_data, y_data, 
+            train_idx, val_idx, 
+            fold, args
+        )
         
         # 保存模型
         model.save(os.path.join(output_dir, f'rnn_model_fold_{fold}.h5'))
         
         fold_results.append({
             'fold': fold,
-            'val_loss': val_loss,
-            'val_acc': val_acc,
-            'val_auc': val_auc,
-            'val_f1': val_f1
+            'val_loss': history.history['loss'][np.argmax(history.history['val_f1_score'])],
+            'val_acc': history.history['accuracy'][np.argmax(history.history['val_f1_score'])],
+            'val_auc': history.history['auc'][np.argmax(history.history['val_f1_score'])],
+            'val_f1': history.history['f1_score'][np.argmax(history.history['val_f1_score'])]
         })
         
-        print(f"\n第 {fold} 折结果 - F1: {val_f1:.4f}, AUC: {val_auc:.4f}, Acc: {val_acc:.4f}")
+        print(f"\n第 {fold} 折结果 - F1: {history.history['f1_score'][np.argmax(history.history['val_f1_score'])]}, AUC: {history.history['auc'][np.argmax(history.history['val_f1_score'])]}, Acc: {history.history['accuracy'][np.argmax(history.history['val_f1_score'])]}")
     
     # 打印所有折的平均结果
     avg_results = {
