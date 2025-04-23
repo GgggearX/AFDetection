@@ -4,15 +4,49 @@ import os
 import h5py
 from tensorflow.keras.models import load_model
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
-import matplotlib.pyplot as plt
 from datasets import ECGSequence, ECGPredictSequence
+import tensorflow as tf
+from tensorflow.keras.metrics import AUC, Precision, Recall
+from tensorflow.keras import backend as K
 
-def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-LSTM', wavenet_dir='outputs/wavenet'):
+def focal_loss(gamma=2.0, alpha=0.25):
+    """实现 Focal Loss 损失函数"""
+    def focal_loss_fixed(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+        epsilon = 1e-7
+        y_pred = tf.clip_by_value(y_pred, epsilon, 1.0 - epsilon)
+        
+        pt_1 = tf.where(tf.equal(y_true, 1.0), y_pred, tf.ones_like(y_pred))
+        pt_0 = tf.where(tf.equal(y_true, 0.0), y_pred, tf.zeros_like(y_pred))
+        loss_1 = -alpha * tf.pow(1.0 - pt_1, gamma) * tf.math.log(pt_1 + epsilon)
+        loss_0 = -(1.0 - alpha) * tf.pow(pt_0, gamma) * tf.math.log(1.0 - pt_0 + epsilon)
+        return tf.reduce_mean(loss_1 + loss_0)
+    return focal_loss_fixed
+
+def f1_score(y_true, y_pred):
+    """计算F1分数，使用0.1作为阈值"""
+    y_pred_binary = K.cast(K.greater(y_pred, 0.1), K.floatx())
+    true_positives = K.sum(y_true * y_pred_binary)
+    possible_positives = K.sum(y_true)
+    predicted_positives = K.sum(y_pred_binary)
+    precision = true_positives / (predicted_positives + K.epsilon())
+    recall = true_positives / (possible_positives + K.epsilon())
+    return 2 * (precision * recall) / (precision + recall + K.epsilon())
+
+def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-LSTM', wavenet_dir='WaveNet', transformer_dir='Transformer'):
     """加载每个fold的最佳模型"""
     rnn_models = []
     densenet_models = []
     cnn_lstm_models = []
     wavenet_models = []
+    transformer_models = []
+    
+    # 修改模型加载部分
+    custom_objects = {
+        'focal_loss_fixed': focal_loss(),
+        'f1_score': f1_score
+    }
     
     # 加载RNN模型
     print("\n加载RNN模型:")
@@ -21,8 +55,16 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
         if os.path.exists(model_path):
             print(f"找到RNN模型 fold {fold}: {model_path}")
             try:
-                model = load_model(model_path, compile=False)
-                model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
+                model = load_model(model_path, custom_objects=custom_objects, compile=False)
+                model.compile(
+                    optimizer='adam',
+                    loss=focal_loss(gamma=2.0, alpha=0.25),
+                    metrics=['accuracy', 
+                            AUC(name='auc_1'), 
+                            Precision(name='precision_1', thresholds=0.1),
+                            Recall(name='recall_1', thresholds=0.1),
+                            f1_score]
+                )
                 # 验证模型输出
                 input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
@@ -44,8 +86,16 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
         if os.path.exists(model_path):
             print(f"找到DenseNet模型 fold {fold}: {model_path}")
             try:
-                model = load_model(model_path, compile=False)
-                model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
+                model = load_model(model_path, custom_objects=custom_objects, compile=False)
+                model.compile(
+                    optimizer='adam',
+                    loss=focal_loss(gamma=2.0, alpha=0.25),
+                    metrics=['accuracy', 
+                            AUC(name='auc_1'), 
+                            Precision(name='precision_1', thresholds=0.1),
+                            Recall(name='recall_1', thresholds=0.1),
+                            f1_score]
+                )
                 input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
@@ -66,8 +116,16 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
         if os.path.exists(model_path):
             print(f"找到CNN-LSTM模型 fold {fold}: {model_path}")
             try:
-                model = load_model(model_path, compile=False)
-                model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
+                model = load_model(model_path, custom_objects=custom_objects, compile=False)
+                model.compile(
+                    optimizer='adam',
+                    loss=focal_loss(gamma=2.0, alpha=0.25),
+                    metrics=['accuracy', 
+                            AUC(name='auc_1'), 
+                            Precision(name='precision_1', thresholds=0.1),
+                            Recall(name='recall_1', thresholds=0.1),
+                            f1_score]
+                )
                 input_shape = model.input_shape[1:]
                 test_input = np.random.random((1,) + input_shape)
                 test_output = model.predict(test_input, verbose=0)
@@ -83,216 +141,188 @@ def load_best_models(rnn_dir='RNN', densenet_dir='DenseNet', cnn_lstm_dir='CNN-L
     
     # 加载WaveNet模型
     print("\n加载WaveNet模型:")
-    model_path = os.path.join(wavenet_dir, 'checkpoints', 'wavenet_model_best.h5')
-    if os.path.exists(model_path):
-        print(f"找到WaveNet模型: {model_path}")
-        try:
-            model = load_model(model_path, compile=False)
-            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'AUC'])
-            input_shape = model.input_shape[1:]
-            test_input = np.random.random((1,) + input_shape)
-            test_output = model.predict(test_input, verbose=0)
-            if test_output.shape == (1, 1):
-                wavenet_models.append(model)
-                print("成功验证WaveNet模型")
-            else:
-                print(f"警告：WaveNet模型输出维度不正确: {test_output.shape}")
-        except Exception as e:
-            print(f"加载WaveNet模型时出错: {str(e)}")
-    else:
-        print(f"警告：未找到WaveNet模型，路径: {model_path}")
+    for fold in range(1, 6):
+        model_path = os.path.join(wavenet_dir, 'models', f'fold_{fold}', f'model_best_wavenet_fold_{fold}.hdf5')
+        if os.path.exists(model_path):
+            print(f"找到WaveNet模型 fold {fold}: {model_path}")
+            try:
+                model = load_model(model_path, custom_objects=custom_objects, compile=False)
+                model.compile(
+                    optimizer='adam',
+                    loss=focal_loss(gamma=2.0, alpha=0.25),
+                    metrics=['accuracy', 
+                            AUC(name='auc_1'), 
+                            Precision(name='precision_1', thresholds=0.1),
+                            Recall(name='recall_1', thresholds=0.1),
+                            f1_score]
+                )
+                input_shape = model.input_shape[1:]
+                test_input = np.random.random((1,) + input_shape)
+                test_output = model.predict(test_input, verbose=0)
+                if test_output.shape == (1, 1):
+                    wavenet_models.append(model)
+                    print("成功验证WaveNet模型")
+                else:
+                    print(f"警告：WaveNet模型输出维度不正确: {test_output.shape}")
+            except Exception as e:
+                print(f"加载WaveNet模型时出错: {str(e)}")
+        else:
+            print(f"警告：未找到WaveNet模型，路径: {model_path}")
     
-    if len(rnn_models) != 5 or len(densenet_models) != 5 or len(cnn_lstm_models) != 5 or len(wavenet_models) != 1:
+    # 加载Transformer模型
+    print("\n加载Transformer模型:")
+    for fold in range(1, 6):
+        model_path = os.path.join(transformer_dir, 'models', f'fold_{fold}', f'model_best_transformer_fold_{fold}.hdf5')
+        if os.path.exists(model_path):
+            print(f"找到Transformer模型 fold {fold}: {model_path}")
+            try:
+                model = load_model(model_path, custom_objects=custom_objects, compile=False)
+                model.compile(
+                    optimizer='adam',
+                    loss=focal_loss(gamma=2.0, alpha=0.25),
+                    metrics=['accuracy', 
+                            AUC(name='auc_1'), 
+                            Precision(name='precision_1', thresholds=0.1),
+                            Recall(name='recall_1', thresholds=0.1),
+                            f1_score]
+                )
+                input_shape = model.input_shape[1:]
+                test_input = np.random.random((1,) + input_shape)
+                test_output = model.predict(test_input, verbose=0)
+                if test_output.shape == (1, 1):
+                    transformer_models.append(model)
+                    print(f"成功验证Transformer模型 fold {fold}")
+                else:
+                    print(f"警告：Transformer模型 fold {fold} 输出维度不正确: {test_output.shape}")
+            except Exception as e:
+                print(f"加载Transformer模型 fold {fold} 时出错: {str(e)}")
+        else:
+            print(f"警告：未找到Transformer模型 fold {fold}，路径: {model_path}")
+    
+    if len(rnn_models) != 5 or len(densenet_models) != 5 or len(cnn_lstm_models) != 5 or len(wavenet_models) != 1 or len(transformer_models) != 5:
         print(f"\n警告：期望每个类型有指定数量的模型，但实际找到：")
         print(f"RNN模型: {len(rnn_models)}")
         print(f"DenseNet模型: {len(densenet_models)}")
         print(f"CNN-LSTM模型: {len(cnn_lstm_models)}")
         print(f"WaveNet模型: {len(wavenet_models)}")
+        print(f"Transformer模型: {len(transformer_models)}")
         print("请确保所有模型都已正确训练和保存。")
     
-    print(f"\n总结：已加载 {len(rnn_models)} 个RNN模型, {len(densenet_models)} 个DenseNet模型, {len(cnn_lstm_models)} 个CNN-LSTM模型, {len(wavenet_models)} 个WaveNet模型")
-    return rnn_models, densenet_models, cnn_lstm_models, wavenet_models
+    print(f"\n总结：已加载 {len(rnn_models)} 个RNN模型, {len(densenet_models)} 个DenseNet模型, {len(cnn_lstm_models)} 个CNN-LSTM模型, {len(wavenet_models)} 个WaveNet模型, {len(transformer_models)} 个Transformer模型")
+    return rnn_models, densenet_models, cnn_lstm_models, wavenet_models, transformer_models
 
-def predict_with_models(models, x_data, batch_size=32, model_type="Unknown", seq_length=4096, model_dir=None):
-    """使用多个模型进行预测并平均结果"""
+def predict_with_models(models, x_data, batch_size, model_name, seq_length=4096, model_dir=None):
+    """使用指定模型进行预测"""
     if not models:
-        print(f"Warning: No {model_type} models available for prediction")
+        print(f"警告: 没有找到可用的{model_name}模型")
         return None
     
-    print(f"\nMaking predictions with {model_type} models:")
     predictions = []
-    
-    # 根据模型类型准备数据
-    x_data_model = x_data[:, :seq_length, :] if seq_length else x_data
-    
-    for i, model in enumerate(models):
-        print(f"Running prediction with {model_type} model {i+1}/{len(models)}")
-        # 加载对应的标准化参数
-        scaler_path = os.path.join(model_dir, 'models', f'fold_{i+1}', 'scalers.npy') if model_type != 'WaveNet' else os.path.join(model_dir, 'scalers.npy')
-        if os.path.exists(scaler_path):
-            print(f"Loading scalers from: {scaler_path}")
-            scalers = ECGPredictSequence.load_scalers(scaler_path)
-            # 创建数据生成器，使用加载的标准化器
-            data_sequence = ECGPredictSequence(x_data_model, batch_size=batch_size, scalers=scalers)
-            # 使用model.predict进行预测
-            pred = model.predict(data_sequence, verbose=1)
-            print(f"Prediction shape: {pred.shape}, range: [{pred.min():.3f}, {pred.max():.3f}]")
-            predictions.append(pred)
+    for i, model in enumerate(models, 1):
+        print(f"\n使用{model_name} fold {i}进行预测...")
+        if model_dir:
+            data_generator = ECGPredictSequence(x_data, batch_size=batch_size, max_seq_length=seq_length)
         else:
-            print(f"Warning: Scaler parameters not found at {scaler_path}")
-            return None
+            data_generator = ECGPredictSequence(x_data, batch_size=batch_size, max_seq_length=seq_length)
+        pred = model.predict(data_generator, verbose=1)
+        predictions.append(pred)
     
-    mean_pred = np.mean(predictions, axis=0)
-    print(f"Mean {model_type} prediction shape: {mean_pred.shape}, range: [{mean_pred.min():.3f}, {mean_pred.max():.3f}]")
-    return mean_pred
+    return np.mean(predictions, axis=0) if predictions else None
 
-def ensemble_predict(x_data, rnn_models, densenet_models, cnn_lstm_models, wavenet_models, batch_size=32):
-    """集成RNN、DenseNet、CNN-LSTM和WaveNet的预测结果"""
-    print("\n准备预测...")
+def evaluate_predictions(y_true, y_pred, model_name):
+    """评估预测结果"""
+    fpr, tpr, _ = roc_curve(y_true, y_pred)
+    roc_auc = auc(fpr, tpr)
     
-    # 获取四种模型的预测
-    print("\nRNN预测 (序列长度: 4096)...")
-    rnn_pred = predict_with_models(rnn_models, x_data, batch_size, "RNN", seq_length=4096, model_dir='RNN')
+    # 计算F1分数（使用0.1作为阈值）
+    y_pred_binary = (y_pred > 0.1).astype(int)
+    tp = np.sum((y_true == 1) & (y_pred_binary == 1))
+    fp = np.sum((y_true == 0) & (y_pred_binary == 1))
+    fn = np.sum((y_true == 1) & (y_pred_binary == 0))
     
-    print("\nDenseNet预测 (序列长度: 4096)...")
-    densenet_pred = predict_with_models(densenet_models, x_data, batch_size, "DenseNet", seq_length=4096, model_dir='DenseNet')
+    precision = tp / (tp + fp + 1e-7)
+    recall = tp / (tp + fn + 1e-7)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-7)
     
-    print("\nCNN-LSTM预测 (序列长度: 4096)...")
-    cnn_lstm_pred = predict_with_models(cnn_lstm_models, x_data, batch_size, "CNN-LSTM", seq_length=4096, model_dir='CNN-LSTM')
+    print(f"\n{model_name}模型评估结果:")
+    print(f"AUC: {roc_auc:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
     
-    print("\nWaveNet预测 (序列长度: 4096)...")
-    wavenet_pred = predict_with_models(wavenet_models, x_data, batch_size, "WaveNet", seq_length=4096, model_dir='outputs/wavenet')
-    
-    if rnn_pred is None or densenet_pred is None or cnn_lstm_pred is None or wavenet_pred is None:
-        print("错误：一个或多个模型预测失败")
-        return None, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred
-    
-    # 加权平均
-    print("\n计算集成预测结果...")
-    weights = [0.2, 0.2, 0.3, 0.3]  # 给CNN-LSTM和WaveNet稍微高一点的权重
-    ensemble_pred = (weights[0] * rnn_pred + weights[1] * densenet_pred + 
-                    weights[2] * cnn_lstm_pred + weights[3] * wavenet_pred)
-    print(f"集成预测形状: {ensemble_pred.shape}, 范围: [{ensemble_pred.min():.3f}, {ensemble_pred.max():.3f}]")
-    
-    return ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred
-
-def plot_roc_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred, ensemble_pred):
-    """绘制ROC曲线"""
-    plt.figure(figsize=(10, 8))
-    
-    # 计算每个模型的ROC曲线
-    for pred, label, color in [(rnn_pred, 'RNN', 'blue'),
-                              (densenet_pred, 'DenseNet', 'red'),
-                              (cnn_lstm_pred, 'CNN-LSTM', 'orange'),
-                              (wavenet_pred, 'WaveNet', 'purple'),
-                              (ensemble_pred, 'Ensemble', 'green')]:
-        fpr, tpr, _ = roc_curve(y_true, pred)
-        roc_auc = auc(fpr, tpr)
-        plt.plot(fpr, tpr, color=color, label=f'{label} (AUC = {roc_auc:.3f})')
-    
-    plt.plot([0, 1], [0, 1], 'k--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic (ROC) Curves')
-    plt.legend(loc="lower right")
-    plt.savefig('outputs/roc_curves.png')
-    plt.close()
-
-def plot_precision_recall_curves(y_true, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred, ensemble_pred):
-    """绘制PR曲线"""
-    plt.figure(figsize=(10, 8))
-    
-    # 计算每个模型的PR曲线
-    for pred, label, color in [(rnn_pred, 'RNN', 'blue'),
-                              (densenet_pred, 'DenseNet', 'red'),
-                              (cnn_lstm_pred, 'CNN-LSTM', 'orange'),
-                              (wavenet_pred, 'WaveNet', 'purple'),
-                              (ensemble_pred, 'Ensemble', 'green')]:
-        precision, recall, _ = precision_recall_curve(y_true, pred)
-        avg_precision = average_precision_score(y_true, pred)
-        plt.plot(recall, precision, color=color,
-                label=f'{label} (AP = {avg_precision:.3f})')
-    
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curves')
-    plt.legend(loc="lower left")
-    plt.savefig('outputs/pr_curves.png')
-    plt.close()
+    return roc_auc, f1, precision, recall
 
 def main():
-    # 创建输出目录
-    os.makedirs('outputs', exist_ok=True)
-    
-    # 设置默认路径
-    default_data_dir = 'data/physionet/training2017'
-    default_reference_file = 'data/REFERENCE-v3.csv'
-    
+    """主函数"""
     # 加载数据
-    print("加载数据...")
-    from datasets import load_data
-    x_data, y_true = load_data(default_data_dir, default_reference_file, max_seq_length=4096)
+    data_dir = "data/physionet/training2017"
+    reference_file = "data/physionet/training2017/REFERENCE.csv"
     
-    # 加载模型
-    print("加载模型...")
-    rnn_models, densenet_models, cnn_lstm_models, wavenet_models = load_best_models()
+    # 加载标签
+    labels_df = pd.read_csv(reference_file, header=None, names=['file', 'label'])
+    labels_df['label'] = (labels_df['label'] == 'A').astype(int)
     
-    if len(rnn_models) == 0 or len(densenet_models) == 0 or len(cnn_lstm_models) == 0 or len(wavenet_models) == 0:
-        print("错误：未找到模型。请确保所有模型都已正确训练和保存。")
-        return
+    # 加载所有模型
+    rnn_models, densenet_models, cnn_lstm_models, wavenet_models, transformer_models = load_best_models()
+    
+    # 设置批量大小
+    batch_size = 32
+    
+    # 加载测试数据
+    x_data = []
+    y_true = []
+    for idx, row in labels_df.iterrows():
+        file_path = os.path.join(data_dir, row['file'] + '.mat')
+        if os.path.exists(file_path):
+            with h5py.File(file_path, 'r') as f:
+                data = np.array(f['val'])
+                x_data.append(data)
+                y_true.append(row['label'])
+    
+    x_data = np.array(x_data)
+    y_true = np.array(y_true)
     
     # 进行预测
-    print("开始预测...")
-    ensemble_pred, rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred = ensemble_predict(
-        x_data, rnn_models, densenet_models, cnn_lstm_models, wavenet_models)
+    print("\nRNN预测 (序列长度: 4096)...")
+    rnn_pred = predict_with_models(rnn_models, x_data, batch_size, "RNN", seq_length=4096)
     
-    if ensemble_pred is None:
-        print("错误：预测失败。请检查模型和数据格式。")
-        return
+    print("\nDenseNet预测 (序列长度: 4096)...")
+    densenet_pred = predict_with_models(densenet_models, x_data, batch_size, "DenseNet", seq_length=4096)
     
-    # 保存预测结果
-    results_df = pd.DataFrame({
-        'RNN_Prediction': rnn_pred.flatten(),
-        'DenseNet_Prediction': densenet_pred.flatten(),
-        'CNN-LSTM_Prediction': cnn_lstm_pred.flatten(),
-        'WaveNet_Prediction': wavenet_pred.flatten(),
-        'Ensemble_Prediction': ensemble_pred.flatten(),
-        'True_Label': y_true.flatten()
-    })
-    results_df.to_csv('outputs/predictions.csv', index=False)
+    print("\nCNN-LSTM预测 (序列长度: 4096)...")
+    cnn_lstm_pred = predict_with_models(cnn_lstm_models, x_data, batch_size, "CNN-LSTM", seq_length=4096)
     
-    # 绘制评估图表
-    print("生成评估图表...")
-    plot_roc_curves(y_true.flatten(), rnn_pred.flatten(), 
-                   densenet_pred.flatten(), cnn_lstm_pred.flatten(),
-                   wavenet_pred.flatten(), ensemble_pred.flatten())
-    plot_precision_recall_curves(y_true.flatten(), rnn_pred.flatten(), 
-                               densenet_pred.flatten(), cnn_lstm_pred.flatten(),
-                               wavenet_pred.flatten(), ensemble_pred.flatten())
+    print("\nWaveNet预测 (序列长度: 4096)...")
+    wavenet_pred = predict_with_models(wavenet_models, x_data, batch_size, "WaveNet", seq_length=4096)
     
-    # 打印评估指标
-    print("\n模型评估指标:")
-    for model in ['RNN', 'DenseNet', 'CNN-LSTM', 'WaveNet', 'Ensemble']:
-        pred = results_df[f'{model}_Prediction']
-        true = results_df['True_Label']
-        
-        # 计算指标
-        auc_score = roc_auc_score(true, pred)
-        ap_score = average_precision_score(true, pred)
-        f1 = f1_score(true, pred > 0.5)
-        precision = precision_score(true, pred > 0.5)
-        recall = recall_score(true, pred > 0.5)
-        
-        print(f"\n{model} 模型:")
-        print(f"AUC: {auc_score:.3f}")
-        print(f"Average Precision: {ap_score:.3f}")
-        print(f"F1 Score: {f1:.3f}")
-        print(f"Precision: {precision:.3f}")
-        print(f"Recall: {recall:.3f}")
+    print("\nTransformer预测 (序列长度: 4096)...")
+    transformer_pred = predict_with_models(transformer_models, x_data, batch_size, "Transformer", seq_length=4096)
+    
+    # 评估每个模型的性能
+    results = {}
+    if rnn_pred is not None:
+        results['RNN'] = evaluate_predictions(y_true, rnn_pred, "RNN")
+    if densenet_pred is not None:
+        results['DenseNet'] = evaluate_predictions(y_true, densenet_pred, "DenseNet")
+    if cnn_lstm_pred is not None:
+        results['CNN-LSTM'] = evaluate_predictions(y_true, cnn_lstm_pred, "CNN-LSTM")
+    if wavenet_pred is not None:
+        results['WaveNet'] = evaluate_predictions(y_true, wavenet_pred, "WaveNet")
+    if transformer_pred is not None:
+        results['Transformer'] = evaluate_predictions(y_true, transformer_pred, "Transformer")
+    
+    # 集成预测（简单平均）
+    valid_predictions = [pred for pred in [rnn_pred, densenet_pred, cnn_lstm_pred, wavenet_pred, transformer_pred] if pred is not None]
+    if valid_predictions:
+        ensemble_pred = np.mean(valid_predictions, axis=0)
+        print("\n集成模型评估结果:")
+        ensemble_results = evaluate_predictions(y_true, ensemble_pred, "Ensemble")
+        results['Ensemble'] = ensemble_results
+    
+    # 保存结果
+    results_df = pd.DataFrame(results, index=['AUC', 'F1', 'Precision', 'Recall']).T
+    results_df.to_csv('ensemble_results.csv')
+    print("\n结果已保存到 ensemble_results.csv")
 
 if __name__ == "__main__":
     main()

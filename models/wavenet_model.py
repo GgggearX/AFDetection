@@ -105,13 +105,15 @@ class WaveNetBlock(layers.Layer):
         })
         return config
 
-def build_wavenet_model(input_shape, num_classes=1, num_blocks=4, num_filters=32, kernel_size=3):
+def get_model(max_seq_length, n_classes=1, last_layer='sigmoid', n_leads=1, num_blocks=4, num_filters=32, kernel_size=3):
     """
     构建WaveNet模型
     
     Args:
-        input_shape: 输入形状 (time_steps, channels)
-        num_classes: 输出类别数
+        max_seq_length: 最大序列长度
+        n_classes: 输出类别数
+        last_layer: 最后一层激活函数
+        n_leads: 导联数
         num_blocks: WaveNet块的数量
         num_filters: 每个卷积层的滤波器数量
         kernel_size: 卷积核大小
@@ -122,7 +124,7 @@ def build_wavenet_model(input_shape, num_classes=1, num_blocks=4, num_filters=32
     # 使用He初始化
     kernel_initializer = tf.keras.initializers.HeNormal(seed=42)
     
-    inputs = layers.Input(shape=input_shape)
+    inputs = layers.Input(shape=(max_seq_length, n_leads))
     
     # 初始卷积层
     x = layers.Conv1D(
@@ -163,40 +165,10 @@ def build_wavenet_model(input_shape, num_classes=1, num_blocks=4, num_filters=32
     
     # 输出层
     outputs = layers.Dense(
-        num_classes, 
-        activation='sigmoid',
+        n_classes, 
+        activation=last_layer,
         kernel_initializer=kernel_initializer
     )(x)
     
     model = Model(inputs=inputs, outputs=outputs)
-    return model
-
-def create_wavenet_model(input_shape, learning_rate=0.001):
-    """
-    创建并编译WaveNet模型
-    
-    Args:
-        input_shape: 输入形状
-        learning_rate: 学习率
-    
-    Returns:
-        编译好的WaveNet模型
-    """
-    model = build_wavenet_model(input_shape)
-    
-    optimizer = tf.keras.optimizers.Adam(
-        learning_rate=learning_rate,
-        clipnorm=1.0,  # 添加梯度裁剪
-        clipvalue=0.5  # 限制梯度值范围
-    )
-    
-    # 使用自定义的AUC指标名称
-    auc_metric = tf.keras.metrics.AUC(name='auc_1')
-    
-    model.compile(
-        optimizer=optimizer,
-        loss='binary_crossentropy',
-        metrics=['accuracy', auc_metric]
-    )
-    
     return model 
