@@ -1,6 +1,6 @@
 # 心房颤动检测系统
 
-基于深度学习的心房颤动（AF）自动检测系统，集成了多种深度学习模型，包括RNN、DenseNet、CNN-LSTM、WaveNet和Transformer模型。
+基于深度学习的心房颤动（AF）自动检测系统，包含多种深度学习模型，包括RNN、DenseNet、CNN-LSTM、WaveNet和Transformer模型。
 
 ## 项目结构
 
@@ -29,7 +29,6 @@
 ├── train_cnn_lstm.py           # CNN-LSTM模型训练脚本
 ├── train_wavenet.py            # WaveNet模型训练脚本
 ├── train_transformer.py        # Transformer模型训练脚本
-├── ensemble_predict.py         # 集成预测脚本
 ├── visualize_results.py        # 结果可视化脚本
 └── requirements.txt            # 项目依赖
 ```
@@ -69,6 +68,7 @@
    - 信号归一化
    - 固定长度裁剪/填充
    - 数据增强（可选）
+   - SMOTE处理类别不平衡
 
 2. 模型训练：
    ```bash
@@ -89,25 +89,12 @@
    - 混淆矩阵
    - 准确率、精确率、召回率等指标
 
-## 集成预测
-
-使用 `ensemble_predict.py` 进行模型集成预测：
-
-```bash
-python ensemble_predict.py --data_dir path/to/test/data --output_dir path/to/output
-```
-
-集成策略：
-- 加权投票机制
-- 动态权重调整
-- 置信度阈值过滤
-
 ## 结果可视化
 
 使用 `visualize_results.py` 生成可视化结果：
 
 ```bash
-python visualize_results.py --results_dir path/to/results
+python visualize_results.py --models RNN DenseNet CNN-LSTM WaveNet Transformer --output_dir model_comparison
 ```
 
 可视化内容：
@@ -117,14 +104,14 @@ python visualize_results.py --results_dir path/to/results
    - AUC变化
 
 2. 模型性能对比
-   - 各模型ROC曲线对比
-   - 各模型PR曲线对比
-   - 性能指标箱线图
+   - 各模型F1得分对比
+   - 各模型AUC、精确率、召回率对比
+   - 性能指标雷达图
 
 3. 预测结果分析
    - 混淆矩阵热力图
-   - 错误预测案例分析
-   - 模型注意力可视化
+   - 指标相关性热力图
+   - 学习曲线可视化
 
 ## 输出目录结构
 
@@ -145,17 +132,16 @@ model_name/
 │   ├── fold_4/
 │   └── fold_5/
 └── results/              # 评估结果
-    ├── fold_1/
-    ├── fold_2/
-    ├── fold_3/
-    ├── fold_4/
-    ├── fold_5/
-    └── fold_results.csv  # 汇总结果
+    ├── metrics_comparison.png
+    ├── learning_curves_grid.png
+    ├── model_radar_chart.png
+    ├── metrics_correlation.png
+    └── val_f1_score_learning_curves.png
 ```
 
 ## 环境要求
 
-- Python 3.8+
+- Python 3.7+
 - TensorFlow 2.6+
 - CUDA 11.0+（推荐使用GPU加速）
 - 其他依赖见 requirements.txt
@@ -164,7 +150,7 @@ model_name/
 
 1. 创建虚拟环境：
 ```bash
-conda create -n afdetection python=3.8
+conda create -n afdetection python=3.7.16
 conda activate afdetection
 ```
 
@@ -178,17 +164,17 @@ pip install -r requirements.txt
 1. 数据准备
    - 确保数据格式正确
    - 检查标签分布是否均衡
-   - 考虑使用数据增强
+   - 考虑使用SMOTE处理类别不平衡
 
 2. 训练过程
    - 根据GPU内存调整batch size
    - 适当调整学习率和训练轮数
-   - 注意保存训练检查点
+   - 使用Focal Loss处理类别不平衡
 
 3. 模型选择
    - 可以单独使用某个模型
-   - 推荐使用模型集成获得更好效果
-   - 根据实际需求调整集成权重
+   - 根据实际需求选择合适的模型
+   - 考虑推理速度和准确率的权衡
 
 4. 结果分析
    - 关注验证集性能
@@ -224,5 +210,5 @@ pip install -r requirements.txt
 3. 预测效果不佳
    - 增加训练数据
    - 调整模型架构
-   - 使用模型集成
+   - 尝试不同的数据增强方法
 

@@ -1,265 +1,695 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Model Performance Comparison Visualization Tool
+- Compares performance metrics across different ECG AF detection models
+- Uses complete training histories for learning curve visualization
+- Provides tabular performance summaries
+"""
+
+import os
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, roc_curve, auc, roc_auc_score, average_precision_score, precision_recall_curve, precision_score, recall_score, f1_score
-import os
-import matplotlib as mpl
+from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import FormatStrFormatter
+import matplotlib.colors as mcolors
+from sklearn.preprocessing import MinMaxScaler
+import warnings
+import argparse
+from pathlib import Path
 
-# Set global font and style parameters
-mpl.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial', 'DejaVu Sans', 'Helvetica']
-mpl.rcParams['axes.unicode_minus'] = False
-mpl.rcParams['figure.dpi'] = 100
-mpl.rcParams['figure.autolayout'] = True
-plt.style.use('seaborn')
+# Suppress warnings
+warnings.filterwarnings('ignore')
 
-def plot_training_history(model_dirs):
-    """绘制训练历史曲线"""
-    plt.figure(figsize=(12, 8))
+# Set plotting style
+plt.style.use('ggplot')
+sns.set_style("whitegrid")
+
+# Define a consistent color palette for models
+MODEL_COLORS = {
+    'CNN-LSTM': '#3498db',    # Blue
+    'DenseNet': '#2ecc71',    # Green
+    'RNN': '#e74c3c',         # Red
+    'WaveNet': '#9b59b6',     # Purple
+    'Transformer': '#f39c12', # Orange
+    'Ensemble': '#34495e'     # Dark Gray
+}
+
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='ECG Model Performance Visualization Tool')
     
-    # 定义颜色
-    colors = ['b', 'g', 'r', 'c', 'm']
-    has_valid_data = False
+    parser.add_argument('--output_dir', type=str, default='model_comparison',
+                        help='Directory to save visualization outputs')
+    parser.add_argument('--include_ensemble', action='store_true', 
+                        help='Include ensemble results if available')
+    parser.add_argument('--dpi', type=int, default=300,
+                        help='DPI for saved figures')
+    parser.add_argument('--models', nargs='+', 
+                        default=['CNN-LSTM', 'DenseNet', 'RNN', 'WaveNet', 'Transformer'],
+                        help='Models to include in comparison')
+    parser.add_argument('--metrics', nargs='+', 
+                        default=['val_f1_score', 'val_auc_1', 'val_precision_1', 'val_recall_1'],
+                        help='Main metrics to visualize')
     
-    for i, model_dir in enumerate(model_dirs):
-        color = colors[i % len(colors)]
-        label = os.path.basename(model_dir)
-        print(f"处理模型: {label}")
+    return parser.parse_args()
+
+def load_training_histories(model_names, n_folds=5):
+    """
+    Load complete training histories for all models
+    
+    Args:
+        model_names: List of model names
+        n_folds: Number of folds in the cross-validation
         
-        # 读取所有fold的训练历史
-        for fold in range(1, 6):
-            # 尝试不同的可能文件路径
-            possible_paths = [
-                os.path.join(model_dir, 'logs', f'fold_{fold}', 'training_history.csv'),
-                os.path.join(model_dir, 'logs', f'fold_{fold}', f'training_fold_{fold}.csv'),
-                os.path.join(model_dir, 'logs', f'training_fold_{fold}.csv')
-            ]
-            
-            history_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    history_path = path
-                    break
-            
-            if history_path:
-                print(f"  读取 fold_{fold} 的训练历史: {history_path}")
-                try:
-                    history = pd.read_csv(history_path)
-                    print(f"  可用的列: {', '.join(history.columns)}")
-                    
-                    # 处理不同的列名
-                    auc_cols = [col for col in history.columns if 'auc' in col.lower()]
-                    val_auc_cols = [col for col in auc_cols if 'val' in col.lower()]
-                    train_auc_cols = [col for col in auc_cols if 'val' not in col.lower()]
-                    
-                    if train_auc_cols and val_auc_cols:
-                        train_auc_col = train_auc_cols[0]
-                        val_auc_col = val_auc_cols[0]
-                        
-                        plt.plot(history[train_auc_col], color=color, alpha=0.3, 
-                                label=f'{label} Fold {fold} (训练)')
-                        plt.plot(history[val_auc_col], color=color, alpha=0.3, 
-                                linestyle='--', label=f'{label} Fold {fold} (验证)')
-                        has_valid_data = True
-                    else:
-                        print(f"  警告: 在{history_path}中未找到AUC相关的列")
-                except Exception as e:
-                    print(f"  错误: 读取{history_path}时出错: {str(e)}")
-            else:
-                print(f"  警告: 未找到fold_{fold}的训练历史文件")
+    Returns:
+        Dictionary with model names as keys and lists of training histories as values
+    """
+    all_histories = {}
     
-    if has_valid_data:
-        plt.title('训练历史 - AUC')
-        plt.xlabel('轮次')
-        plt.ylabel('AUC')
-        plt.legend()
-        plt.grid(True)
-        save_path = os.path.join('outputs', 'training_history.png')
-        os.makedirs('outputs', exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"训练历史曲线已保存到: {save_path}")
+    for model_name in model_names:
+        print(f"Loading training history for {model_name}...")
+        model_histories = []
+        
+        for fold in range(1, n_folds + 1):
+            # Try to load training log
+            log_file = os.path.join(model_name, 'logs', f'fold_{fold}', f'training_fold_{fold}.csv')
+            
+            if os.path.exists(log_file):
+                try:
+                    history_df = pd.read_csv(log_file)
+                    if not history_df.empty:
+                        print(f"   Loaded training history for {model_name} fold {fold} - {len(history_df)} epochs")
+                        model_histories.append({'fold': fold, 'history': history_df})
+                    else:
+                        print(f"   Warning: {model_name} fold {fold} training history is empty")
+                except Exception as e:
+                    print(f"   Error: Unable to load {model_name} fold {fold} training history: {e}")
+            else:
+                print(f"   Warning: {model_name} fold {fold} training log not found: {log_file}")
+        
+        if model_histories:
+            all_histories[model_name] = model_histories
+            print(f"Successfully loaded training history for {model_name} with {len(model_histories)} folds")
+        else:
+            print(f"Warning: No training history found for {model_name}")
+    
+    return all_histories
+
+def get_average_learning_curves(model_histories, metrics=None):
+    """
+    Calculate average learning curves across all folds
+    
+    Args:
+        model_histories: List of dictionaries containing training history
+        metrics: List of metrics to calculate average curves for
+        
+    Returns:
+        Dictionary with metric names as keys and lists of average values as values
+    """
+    if not model_histories:
+        return {}
+    
+    # Determine the longest training history
+    max_epochs = max(len(fold['history']) for fold in model_histories)
+    
+    # If no metrics specified, use all columns except 'epoch' and 'lr' from the first history
+    if metrics is None:
+        metrics = [col for col in model_histories[0]['history'].columns 
+                  if col not in ['epoch', 'lr']]
+    
+    # Initialize result arrays
+    avg_curves = {}
+    for metric in metrics:
+        if any(metric in fold['history'].columns for fold in model_histories):
+            avg_curves[metric] = np.zeros(max_epochs)
+            count = np.zeros(max_epochs)
+            
+            # Accumulate values from each fold at each epoch
+            for fold in model_histories:
+                if metric in fold['history'].columns:
+                    history = fold['history']
+                    for i, value in enumerate(history[metric]):
+                        avg_curves[metric][i] += value
+                        count[i] += 1
+            
+            # Calculate average values
+            for i in range(max_epochs):
+                if count[i] > 0:
+                    avg_curves[metric][i] /= count[i]
+    
+    return avg_curves
+
+def create_model_summary_df(all_histories):
+    """
+    Create a summary DataFrame of model performances
+    
+    Args:
+        all_histories: Dictionary with model training histories
+        
+    Returns:
+        DataFrame with model performance summaries
+    """
+    records = []
+    
+    for model_name, model_histories in all_histories.items():
+        # Calculate final average performance across all folds
+        record = {'model': model_name}
+        
+        # For each metric, calculate the average value of the last epoch as final performance
+        for fold in model_histories:
+            history_df = fold['history']
+            fold_idx = fold['fold']
+            
+            # Get the value of each metric from the last epoch
+            for col in history_df.columns:
+                if col not in ['epoch', 'lr']:
+                    last_value = history_df[col].iloc[-1]
+                    
+                    # Accumulate to the record
+                    if col in record:
+                        record[col].append(last_value)
+                    else:
+                        record[col] = [last_value]
+        
+        # Calculate average values for each metric
+        for metric in list(record.keys()):
+            if metric != 'model' and isinstance(record[metric], list):
+                record[metric] = np.mean(record[metric])
+        
+        records.append(record)
+    
+    return pd.DataFrame(records)
+
+def plot_metrics_comparison(df, metrics=None, figsize=(14, 10), output_dir=None, dpi=300):
+    """
+    Plot bar charts comparing metrics across models
+    
+    Args:
+        df: DataFrame with model metrics
+        metrics: List of metrics to plot
+        figsize: Figure size
+        output_dir: Directory to save output
+    """
+    if metrics is None:
+        metrics = ['val_f1_score', 'val_auc_1', 'val_precision_1', 'val_recall_1']
+    
+    # Ensure we only use metrics that exist in the DataFrame
+    available_metrics = [m for m in metrics if m in df.columns]
+    
+    if len(available_metrics) == 0:
+        print("Warning: None of the specified metrics are available in the data")
+        return None
+    
+    # Fill in any missing metrics with placeholders to prevent errors
+    for metric in metrics:
+        if metric not in df.columns:
+            df[metric] = np.nan
+    
+    metric_labels = {
+        'val_f1_score': 'F1 Score',
+        'val_auc_1': 'AUC',
+        'val_precision_1': 'Precision',
+        'val_recall_1': 'Recall',
+        'val_accuracy': 'Accuracy',
+        'val_loss': 'Loss'
+    }
+    
+    # Create figure with subplots - only for available metrics
+    num_metrics = min(4, len(available_metrics))
+    if num_metrics <= 2:
+        fig, axes = plt.subplots(1, num_metrics, figsize=figsize)
+        if num_metrics == 1:
+            axes = [axes]  # Ensure axes is a list for consistent indexing
     else:
-        plt.close()
-        print("警告: 没有找到有效的训练历史数据，跳过绘图")
-
-def plot_roc_curves(model_dirs):
-    """绘制ROC曲线"""
-    plt.figure(figsize=(10, 8))
-    colors = ['b', 'g', 'r', 'c', 'm']
-    has_valid_data = False
+        fig, axes = plt.subplots(2, (num_metrics+1)//2, figsize=figsize)
     
-    for i, model_dir in enumerate(model_dirs):
-        color = colors[i % len(colors)]
-        label = os.path.basename(model_dir)
-        print(f"处理模型: {label}")
-        
-        # 处理每个fold的ROC数据
-        for fold in range(1, 6):
-            # 尝试不同的可能文件路径
-            possible_paths = [
-                os.path.join(model_dir, 'logs', f'fold_{fold}', 'roc_data.csv'),
-                os.path.join(model_dir, 'logs', f'fold_{fold}', f'roc_fold_{fold}.csv'),
-                os.path.join(model_dir, 'logs', f'roc_fold_{fold}.csv')
-            ]
-            
-            roc_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    roc_path = path
-                    break
-            
-            if roc_path:
-                print(f"  读取 fold_{fold} 的ROC数据: {roc_path}")
-                try:
-                    roc_data = pd.read_csv(roc_path)
-                    print(f"  可用的列: {', '.join(roc_data.columns)}")
-                    
-                    # 检查必要的列
-                    required_cols = ['fpr', 'tpr']
-                    if all(col in roc_data.columns for col in required_cols):
-                        fpr = roc_data['fpr'].values
-                        tpr = roc_data['tpr'].values
-                        
-                        # 计算AUC
-                        roc_auc = auc(fpr, tpr)
-                        
-                        plt.plot(fpr, tpr, color=color, alpha=0.3,
-                                label=f'{label} Fold {fold} (AUC = {roc_auc:.3f})')
-                        has_valid_data = True
-                    else:
-                        print(f"  警告: 在{roc_path}中未找到必要的列 (fpr, tpr)")
-                except Exception as e:
-                    print(f"  错误: 读取{roc_path}时出错: {str(e)}")
-                    if 'roc_data' in locals():
-                        print(f"  文件内容预览:\n{roc_data.head()}")
-            else:
-                print(f"  警告: 未找到fold_{fold}的ROC数据文件")
+    axes = np.array(axes).flatten()
     
-    if has_valid_data:
-        plt.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='随机猜测')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('假阳性率')
-        plt.ylabel('真阳性率')
-        plt.title('ROC曲线')
-        plt.legend(loc='lower right', fontsize='small')
-        plt.grid(True)
+    # Plot each available metric
+    for i, metric in enumerate(available_metrics[:4]):  # Limit to first 4 metrics
+        ax = axes[i]
         
-        save_path = os.path.join('outputs', 'roc_curves.png')
-        os.makedirs('outputs', exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"ROC曲线已保存到: {save_path}")
-    else:
-        plt.close()
-        print("警告: 没有找到有效的ROC数据，跳过绘图")
-
-def plot_confusion_matrices(model_dirs):
-    """绘制混淆矩阵"""
-    n_models = len(model_dirs)
-    fig, axes = plt.subplots(1, n_models, figsize=(5*n_models, 5))
-    if n_models == 1:
-        axes = [axes]
+        # Skip metrics with all NaN values
+        if df[metric].isna().all():
+            ax.text(0.5, 0.5, f"No data available for {metric_labels.get(metric, metric)}", 
+                   ha='center', va='center', fontsize=12)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+        
+        # Sort models by metric value, handling NaN values
+        metric_df = df.sort_values(by=metric, ascending=False, na_position='last')
+        
+        # Filter out rows with NaN for this metric
+        metric_df = metric_df[~metric_df[metric].isna()]
+        
+        if len(metric_df) == 0:
+            ax.text(0.5, 0.5, f"No data available for {metric_labels.get(metric, metric)}", 
+                   ha='center', va='center', fontsize=12)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+        
+        # Get colors for each model
+        colors = [MODEL_COLORS.get(model, '#333333') for model in metric_df['model']]
+        
+        # Create the bar plot
+        bars = ax.bar(metric_df['model'], metric_df[metric], color=colors)
+        
+        # Add value labels on top of bars
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                   f'{height:.3f}', ha='center', va='bottom', fontsize=10)
+        
+        # Set title and labels
+        ax.set_title(f'Model Comparison: {metric_labels.get(metric, metric)}', fontsize=14)
+        ax.set_ylabel(metric_labels.get(metric, metric), fontsize=12)
+        ax.set_xlabel('Model', fontsize=12)
+        
+        # Adjust y-axis limits to start slightly below 0 and end above max value
+        if not metric.endswith('loss'):
+            y_max = max(metric_df[metric]) * 1.15
+            ax.set_ylim([0, y_max])
+        
+        # Add minor gridlines
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+        # Rotate x-tick labels if they might overlap
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
     
-    for i, (model_dir, ax) in enumerate(zip(model_dirs, axes)):
-        label = os.path.basename(model_dir)
-        print(f"处理模型: {label}")
-        
-        # 读取所有fold的混淆矩阵并求平均
-        cm_sum = None
-        fold_count = 0
-        for fold in range(1, 6):
-            # 尝试不同的可能文件路径
-            possible_paths = [
-                os.path.join(model_dir, 'results', f'fold_{fold}', 'confusion_matrix.csv'),
-                os.path.join(model_dir, 'results', f'confusion_matrix_fold_{fold}.csv')
-            ]
-            
-            cm_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    cm_path = path
-                    break
-            
-            if cm_path:
-                print(f"  读取 fold_{fold} 的混淆矩阵")
-                try:
-                    cm = pd.read_csv(cm_path, index_col=0).values
-                    if cm_sum is None:
-                        cm_sum = cm
-                    else:
-                        cm_sum += cm
-                    fold_count += 1
-                except Exception as e:
-                    print(f"  错误: 读取{cm_path}时出错: {str(e)}")
-            else:
-                print(f"  警告: 未找到fold_{fold}的混淆矩阵文件")
-        
-        if cm_sum is not None and fold_count > 0:
-            cm_avg = cm_sum / fold_count
-            sns.heatmap(cm_avg, annot=True, fmt='.2f', cmap='Blues', ax=ax)
-            ax.set_title(f'{label}混淆矩阵')
-            ax.set_xlabel('预测值')
-            ax.set_ylabel('真实值')
+    # Hide unused subplots if any
+    for i in range(len(available_metrics), len(axes)):
+        axes[i].set_visible(False)
     
     plt.tight_layout()
-    save_path = os.path.join('outputs', 'confusion_matrices.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"混淆矩阵已保存到: {save_path}")
+    
+    # Save figure if output directory specified
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, 'metrics_comparison.png'), dpi=dpi, bbox_inches='tight')
+    
+    return fig
+
+def plot_learning_curves(all_histories, metric, figsize=(14, 8), output_dir=None, dpi=300):
+    """
+    Plot complete learning curves for all models
+    
+    Args:
+        all_histories: Dictionary with model training histories
+        metric: Metric to plot
+        figsize: Figure size
+        output_dir: Directory to save output
+        dpi: Image DPI
+    """
+    # Metric display names
+    metric_labels = {
+        'val_f1_score': 'F1 Score',
+        'val_auc_1': 'AUC',
+        'val_precision_1': 'Precision',
+        'val_recall_1': 'Recall',
+        'val_accuracy': 'Accuracy',
+        'val_loss': 'Loss'
+    }
+    
+    plt.figure(figsize=figsize)
+    
+    for model_name, model_histories in all_histories.items():
+        # Get average curves for the model
+        avg_curves = get_average_learning_curves(model_histories, [metric])
+        
+        if metric in avg_curves:
+            # Plot average curve
+            color = MODEL_COLORS.get(model_name, '#333333')
+            epochs = range(1, len(avg_curves[metric]) + 1)
+            plt.plot(epochs, avg_curves[metric], linewidth=2, 
+                     label=f"{model_name}", color=color)
+    
+    # Set title and labels
+    plt.title(f'Learning Curves: {metric_labels.get(metric, metric)}', fontsize=16)
+    plt.xlabel('Epoch', fontsize=14)
+    plt.ylabel(metric_labels.get(metric, metric), fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(loc='best', fontsize=12)
+    
+    # Set y-axis range (start from 0 for non-loss metrics)
+    if not metric.endswith('loss'):
+        plt.ylim(bottom=0)
+    
+    plt.tight_layout()
+    
+    # Save figure
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, f'{metric}_learning_curves.png'), 
+                   dpi=dpi, bbox_inches='tight')
+    
+    return plt.gcf()
+
+def plot_learning_curves_grid(all_histories, metrics=None, figsize=(18, 12), output_dir=None, dpi=300):
+    """
+    Create a grid of learning curve plots for multiple metrics
+    
+    Args:
+        all_histories: Dictionary with model training histories
+        metrics: List of metrics to plot
+        figsize: Figure size
+        output_dir: Directory to save the figure
+        dpi: Image DPI
+    """
+    if metrics is None:
+        metrics = ['val_f1_score', 'val_auc_1', 'val_precision_1', 'val_recall_1']
+    
+    # Metric display names
+    metric_labels = {
+        'val_f1_score': 'F1 Score',
+        'val_auc_1': 'AUC',
+        'val_precision_1': 'Precision',
+        'val_recall_1': 'Recall',
+        'val_accuracy': 'Accuracy',
+        'val_loss': 'Loss'
+    }
+    
+    # Find actual available metrics
+    available_metrics = []
+    for metric in metrics:
+        for model_name, model_histories in all_histories.items():
+            for fold in model_histories:
+                if metric in fold['history'].columns:
+                    if metric not in available_metrics:
+                        available_metrics.append(metric)
+                    break
+            if metric in available_metrics:
+                break
+    
+    if not available_metrics:
+        print("No available metrics for plotting")
+        return None
+    
+    # Create subplots
+    num_metrics = min(4, len(available_metrics))
+    if num_metrics <= 2:
+        fig, axes = plt.subplots(1, num_metrics, figsize=figsize)
+        if num_metrics == 1:
+            axes = [axes]  # Ensure axes is a list for consistent indexing
+    else:
+        fig, axes = plt.subplots(2, (num_metrics+1)//2, figsize=figsize)
+    
+    axes = np.array(axes).flatten()
+    
+    # Plot learning curves for each metric
+    for i, metric in enumerate(available_metrics[:4]):
+        ax = axes[i]
+        
+        # Plot average curves for each model
+        for model_name, model_histories in all_histories.items():
+            avg_curves = get_average_learning_curves(model_histories, [metric])
+            
+            if metric in avg_curves:
+                color = MODEL_COLORS.get(model_name, '#333333')
+                epochs = range(1, len(avg_curves[metric]) + 1)
+                ax.plot(epochs, avg_curves[metric], linewidth=2, 
+                         label=f"{model_name}", color=color)
+        
+        # Set title and labels
+        ax.set_title(f'Learning Curves: {metric_labels.get(metric, metric)}', fontsize=14)
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel(metric_labels.get(metric, metric), fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+        # Set y-axis range (start from 0 for non-loss metrics)
+        if not metric.endswith('loss'):
+            ax.set_ylim(bottom=0)
+        
+        # Add legend on first plot only
+        if i == 0:
+            ax.legend(loc='best', fontsize=10)
+    
+    # Hide unused subplots if any
+    for i in range(len(available_metrics), len(axes)):
+        axes[i].set_visible(False)
+    
+    plt.tight_layout()
+    
+    # Save figure if output directory specified
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, 'learning_curves_grid.png'), 
+                   dpi=dpi, bbox_inches='tight')
+    
+    return fig
+
+def plot_metrics_radar(summary_df, metrics=None, figsize=(12, 10), output_dir=None, dpi=300):
+    """
+    Create a radar chart comparing models across metrics
+    
+    Args:
+        summary_df: DataFrame with model summary data
+        metrics: List of metrics to include
+        figsize: Figure size
+        output_dir: Directory to save output
+    """
+    if metrics is None:
+        metrics = ['val_f1_score', 'val_auc_1', 'val_precision_1', 'val_recall_1', 'val_accuracy']
+    
+    # Filter metrics that exist in the data
+    available_metrics = [m for m in metrics if m in summary_df.columns]
+    
+    if len(available_metrics) < 3:
+        print("Not enough metrics available for radar chart")
+        return None
+    
+    # Map metric names to display labels
+    metric_labels = {
+        'val_f1_score': 'F1 Score',
+        'val_auc_1': 'AUC',
+        'val_precision_1': 'Precision',
+        'val_recall_1': 'Recall',
+        'val_accuracy': 'Accuracy',
+        'val_loss': 'Loss (inv)'
+    }
+    
+    # Create figure
+    fig = plt.figure(figsize=figsize)
+    
+    # Calculate angles for each metric
+    angles = np.linspace(0, 2*np.pi, len(available_metrics), endpoint=False).tolist()
+    angles += angles[:1]  # Close the loop
+    
+    # Add one more angle for closure
+    metric_names = available_metrics + [available_metrics[0]]
+    labels = [metric_labels.get(m, m) for m in metric_names]
+    
+    # Create radar plot
+    ax = fig.add_subplot(111, polar=True)
+    
+    # Scale the data to [0,1] for consistent radar shape
+    scaler = MinMaxScaler()
+    scaled_data = {}
+    
+    for metric in available_metrics:
+        values = summary_df[metric].values.reshape(-1, 1)
+        
+        # For loss, invert the values (lower is better)
+        if metric.endswith('loss'):
+            values = -values
+            
+        scaled_values = scaler.fit_transform(values).flatten()
+        scaled_data[metric] = scaled_values
+    
+    # Plot each model
+    for i, (_, row) in enumerate(summary_df.iterrows()):
+        model_name = row['model']
+        color = MODEL_COLORS.get(model_name, '#333333')
+        
+        # Get values for each metric and scale to [0,1]
+        values = [scaled_data[metric][i] for metric in available_metrics]
+        values += values[:1]  # Close the loop
+        
+        # Plot model data
+        ax.plot(angles, values, 'o-', linewidth=2, label=model_name, color=color)
+        ax.fill(angles, values, alpha=0.1, color=color)
+    
+    # Set labels and formatting
+    ax.set_thetagrids(np.degrees(angles), labels)
+    ax.set_rlabel_position(0)
+    ax.set_rticks([0.2, 0.4, 0.6, 0.8, 1.0])
+    ax.set_rmax(1.0)
+    ax.grid(True)
+    
+    # Add legend
+    plt.legend(loc='upper right', bbox_to_anchor=(0.1, 0.1))
+    
+    plt.title("Model Performance Comparison", size=16, y=1.08)
+    
+    # Save figure if output directory specified
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, 'model_radar_chart.png'), dpi=dpi, bbox_inches='tight')
+    
+    return fig
+
+def plot_metrics_correlation(summary_df, figsize=(12, 10), output_dir=None, dpi=300):
+    """
+    Plot correlation heatmap between different metrics
+    
+    Args:
+        summary_df: DataFrame with model metrics
+        figsize: Figure size
+        output_dir: Directory to save output
+    """
+    # Select only numeric columns (metrics)
+    numeric_df = summary_df.select_dtypes(include=['float64', 'int64'])
+    
+    # Only proceed if we have enough metrics
+    if numeric_df.shape[1] < 2:
+        print("Not enough numeric metrics for correlation analysis")
+        return None
+    
+    # Calculate correlation matrix
+    corr_matrix = numeric_df.corr()
+    
+    # Create figure
+    plt.figure(figsize=figsize)
+    
+    # Plot heatmap
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt='.2f', 
+                linewidths=0.5, vmin=-1, vmax=1)
+    
+    plt.title('Correlation Between Performance Metrics', fontsize=16)
+    plt.tight_layout()
+    
+    # Save figure if output directory specified
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, 'metrics_correlation.png'), dpi=dpi, bbox_inches='tight')
+    
+    return plt.gcf()
+
+def print_performance_table(summary_df, metrics=None):
+    """Print formatted performance table to console"""
+    if metrics is None or len(metrics) == 0:
+        metrics = [col for col in summary_df.columns if col != 'model']
+    
+    # Create a copy with more readable metric names
+    display_df = summary_df.copy()
+    
+    # Format metric names for display
+    metric_display_names = {
+        'val_f1_score': 'F1 Score',
+        'val_auc_1': 'AUC',
+        'val_precision_1': 'Precision',
+        'val_recall_1': 'Recall',
+        'val_accuracy': 'Accuracy',
+        'val_loss': 'Loss'
+    }
+    
+    # Format values with consistent precision
+    for col in display_df.columns:
+        if col != 'model' and pd.api.types.is_numeric_dtype(display_df[col]):
+            display_df[col] = display_df[col].map(lambda x: f"{x:.4f}")
+    
+    # Print header
+    print("\n" + "="*80)
+    print("ECG MODEL PERFORMANCE COMPARISON")
+    print("="*80)
+    
+    # Print table with metrics
+    headers = ['Model'] + [metric_display_names.get(m, m) for m in metrics]
+    header_line = " | ".join(h.ljust(12) for h in headers)
+    print(header_line)
+    print("-" * len(header_line))
+    
+    # Print each model's performance
+    for _, row in display_df.iterrows():
+        model_name = row['model']
+        values = [model_name] + [row[m] if m in row else "N/A" for m in metrics]
+        print(" | ".join(v.ljust(12) for v in values))
+    
+    print("="*80 + "\n")
 
 def main():
-    # 创建输出目录
-    output_dir = 'outputs'
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"输出目录: {os.path.abspath(output_dir)}")
+    """Main function to execute the visualization process"""
+    # Parse command line arguments
+    args = parse_arguments()
     
-    # 模型目录列表
-    model_dirs = [
-        'RNN',
-        'DenseNet',
-        'CNN-LSTM',
-        'WaveNet',  # 修正WaveNet的路径
-        'Transformer'
+    print("Starting ECG Model Performance Visualization Tool...")
+    print(f"Output directory: {args.output_dir}")
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Use flexible metric name list
+    flexible_metrics = [
+        'val_f1_score', 'f1_score',
+        'val_auc_1', 'auc_1', 
+        'val_precision_1', 'precision_1',
+        'val_recall_1', 'recall_1',
+        'val_accuracy', 'accuracy'
     ]
     
-    # 检查每个模型目录是否存在
-    print("\n检查模型目录:")
-    for model_dir in model_dirs:
-        if os.path.exists(model_dir):
-            print(f"✓ {model_dir} 存在")
-        else:
-            print(f"✗ {model_dir} 不存在")
+    # Load complete training histories
+    print("Loading model complete training histories...")
+    all_histories = load_training_histories(args.models)
     
-    # 生成可视化结果
-    print("\n开始生成可视化结果...")
+    if not all_histories:
+        print("Error: No model data found")
+        return
     
-    # 训练历史曲线
-    print("\n1. 生成训练历史曲线...")
-    plot_training_history(model_dirs)
+    print(f"Successfully loaded data for {len(all_histories)} models")
     
-    # ROC曲线
-    print("\n2. 生成ROC曲线...")
-    plot_roc_curves(model_dirs)
+    # Create model summary DataFrame
+    summary_df = create_model_summary_df(all_histories)
     
-    # 混淆矩阵
-    print("\n3. 生成混淆矩阵...")
-    plot_confusion_matrices(model_dirs)
+    if summary_df.empty:
+        print("Error: Unable to create summary")
+        return
     
-    # 检查生成的文件
-    print("\n检查生成的文件:")
-    for filename in ['training_history.png', 'roc_curves.png', 'confusion_matrices.png']:
-        filepath = os.path.join(output_dir, filename)
-        if os.path.exists(filepath):
-            print(f"✓ {filename} 已生成")
-        else:
-            print(f"✗ {filename} 未生成")
+    # Identify available metrics
+    available_metrics = [col for col in summary_df.columns if col != 'model']
     
-    print(f"\n所有可视化结果已保存到: {os.path.abspath(output_dir)}")
+    # Update top metrics to use available ones
+    top_metrics = [m for m in flexible_metrics if m in available_metrics]
+    
+    if not top_metrics:
+        print("Warning: No main metrics found, using all available metrics")
+        top_metrics = available_metrics
+    
+    # Print performance table
+    print_performance_table(summary_df, top_metrics)
+    
+    # Generate visualizations
+    print("\nGenerating visualizations...")
+    
+    # 1. Bar chart comparison of top metrics
+    print("Creating metrics comparison bar charts...")
+    plot_metrics_comparison(summary_df, top_metrics, output_dir=args.output_dir, dpi=args.dpi)
+    
+    # 2. Learning curves for each metric
+    for metric in top_metrics:
+        print(f"Creating {metric} learning curves...")
+        plot_learning_curves(all_histories, metric, output_dir=args.output_dir, dpi=args.dpi)
+    
+    # 3. Learning curves grid
+    print("Creating learning curves grid...")
+    plot_learning_curves_grid(all_histories, top_metrics, output_dir=args.output_dir, dpi=args.dpi)
+    
+    # 4. Radar chart
+    print("Creating performance radar chart...")
+    plot_metrics_radar(summary_df, top_metrics, output_dir=args.output_dir, dpi=args.dpi)
+    
+    # 5. Metrics correlation heatmap
+    if len(top_metrics) > 1:
+        print("Creating metrics correlation heatmap...")
+        plot_metrics_correlation(summary_df, output_dir=args.output_dir, dpi=args.dpi)
+    
+    print(f"\nAll visualizations saved to '{args.output_dir}'")
+    print("Visualization process complete!")
 
 if __name__ == "__main__":
     main()
-
-# 执行命令：
-# python visualize_results.py 

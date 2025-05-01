@@ -13,6 +13,7 @@ import random
 import glob
 import wfdb
 from scipy.signal import resample
+from tqdm import tqdm
 
 # 加载数据集时使用的全局标准化器
 GLOBAL_SCALER = None
@@ -338,6 +339,114 @@ def load_data(data_dir, reference_file, max_seq_length=None, normalize=False, n_
     
     print(f"\nK折交叉验证数据准备完成，共 {n_splits} 折")
     return folds
+
+from imblearn.over_sampling import SMOTE
+
+def load_data(data_dir, reference_file, max_seq_length=None, normalize=False, 
+              n_splits=5, random_state=42, use_smote=True):
+    """
+    加载PhysioNet挑战数据集，并可选进行K折交叉验证划分
+    
+    参数:
+        data_dir: 数据目录路径
+        reference_file: 标签文件路径
+        max_seq_length: 最大序列长度
+        normalize: 是否对数据进行标准化
+        n_splits: K折交叉验证的折数
+        random_state: 随机种子
+        use_smote: 是否使用SMOTE平衡类别
+    """
+    print(f"正在从 {reference_file} 加载标签文件...")
+    ref_df = pd.read_csv(reference_file, header=None, names=['filename', 'label'])
+    print(f"标签文件加载完成，共 {len(ref_df)} 条记录")
+    
+    # 将标签映射到二元标签（房颤为1，其他为0）
+    ref_df['af_label'] = ref_df['label'].apply(lambda x: 1 if x == 'A' else 0)
+    
+    # 加载数据
+    data_list = []
+    labels = []
+    
+    for i, row in tqdm(ref_df.iterrows(), total=len(ref_df)):
+        filename = row['filename']
+        label = row['af_label']
+        
+        try:
+            file_path = os.path.join(data_dir, filename)
+            record = wfdb.rdrecord(file_path)
+            signals = record.p_signal.T
+            
+            if max_seq_length is not None and signals.shape[1] != max_seq_length:
+                resampled_signals = np.zeros((signals.shape[0], max_seq_length))
+                for lead_idx in range(signals.shape[0]):
+                    resampled_signals[lead_idx] = resample(signals[lead_idx], max_seq_length)
+                signals = resampled_signals
+            
+            data_list.append(signals.T)  # 保持(seq_length, n_leads)形状
+            labels.append(label)
+        except Exception as e:
+            print(f"加载文件 {filename} 时出错: {e}")
+    
+    # 转换为NumPy数组
+    x_data = np.array(data_list)
+    y_data = np.array(labels)
+    
+    print("\n数据加载完成:")
+    print(f"原始数据 - 正样本(房颤): {np.sum(y_data == 1)}, 负样本: {np.sum(y_data == 0)}")
+    
+    # 应用SMOTE过采样
+    if use_smote:
+        print("\n应用SMOTE过采样...")
+        original_shape = x_data.shape
+        n_samples, seq_length, n_leads = original_shape
+        
+        # 将3D数据reshape为2D (n_samples, seq_length*n_leads)
+        x_reshaped = x_data.reshape(n_samples, -1)
+        
+        sm = SMOTE(random_state=random_state)
+        x_resampled, y_resampled = sm.fit_resample(x_reshaped, y_data)
+        
+        # 恢复原始形状
+        x_data = x_resampled.reshape(-1, seq_length, n_leads)
+        y_data = y_resampled
+        
+        print(f"过采样后 - 正样本: {np.sum(y_data == 1)}, 负样本: {np.sum(y_data == 0)}")
+    
+#     # 标准化处理
+#     if normalize:
+#         print("\n标准化数据...")
+#         x_data, _ = normalize_dataset(x_data, fit_scaler=True)
+    
+    # 如果不进行交叉验证，直接返回
+    if n_splits is None or n_splits <= 1:
+        return x_data, y_data
+    
+    # K折交叉验证划分
+    print(f"\n进行K折划分 (n_splits={n_splits})...")
+    kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    folds = []
+    
+    for train_idx, val_idx in kfold.split(x_data, y_data):
+        x_train, y_train = x_data[train_idx], y_data[train_idx]
+        x_val, y_val = x_data[val_idx], y_data[val_idx]
+        
+#         # 验证集不应用SMOTE
+#         if use_smote:
+#             print("\n对训练集应用SMOTE...")
+#             n_samples = x_train.shape[0]
+#             x_train_reshaped = x_train.reshape(n_samples, -1)
+            
+#             sm = SMOTE(random_state=random_state+len(folds))  # 不同折不同随机种子
+#             x_train_res, y_train_res = sm.fit_resample(x_train_reshaped, y_train)
+            
+#             x_train = x_train_res.reshape(-1, seq_length, n_leads)
+#             y_train = y_train_res
+        
+        folds.append((x_train, y_train, x_val, y_val))
+    
+    print(f"\n数据准备完成，共 {len(folds)} 折")
+    return folds
+
 
 def load_single_record(file_path, max_seq_length=None, normalize=True):
     """

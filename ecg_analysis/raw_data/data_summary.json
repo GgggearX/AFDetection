@@ -1,0 +1,22 @@
+{
+    "n_samples": 8528,
+    "n_leads": 1,
+    "data_shape": "\u5f02\u6784\u6570\u7ec4\uff0c\u6bcf\u4e2a\u6837\u672c\u53ef\u80fd\u6709\u4e0d\u540c\u5f62\u72b6",
+    "sampling_rates": {
+        "min": 300.0,
+        "max": 300.0,
+        "mean": 300.0,
+        "unique_values": [
+            300.0
+        ],
+        "distribution": {
+            "300": 8528
+        }
+    },
+    "record_lengths": {
+        "min": 2714,
+        "max": 18286,
+        "mean": 9749.240267354597,
+        "median": 9000.0
+    }
+}
